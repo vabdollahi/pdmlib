@@ -6,20 +6,29 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pvlib>=0.13.0",
+    "pydantic>=2.11.7",
 ]
 
 [dependency-groups]
 dev = [
-    "black>=25.1.0",
-    "flake8>=7.3.0",
-    "isort>=6.0.1",
     "pytest>=8.4.1",
     "taskipy>=1.14.1",
     "build>=1.2.1",
+    "ruff>=0.5.5",
 ]
 
 [tool.taskipy.tasks]
 start = "bash scripts/start.sh"
 test = "bash scripts/test.sh"
-lint = "bash scripts/lint.sh"
-lint-format = "bash scripts/lint-format.sh"
+lint = "ruff check app"
+lint-format = "ruff format app && ruff check app --fix"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"

@@ -1,2 +1,2 @@
 #!/bin/bash
-pytest tests
+pytest app/tests
