@@ -6,7 +6,7 @@
 ### Common uv Commands
 
 - **Install dependencies:**
-  `uv install`
+  `uv sync --all-extras`
 - **Add dependency:**
   `uv add <package_name>`
 - **Add dev dependency:**
