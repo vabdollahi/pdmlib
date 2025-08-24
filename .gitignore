@@ -12,3 +12,6 @@ wheels/
 
 # Ruff
 .ruff_cache
+
+# data folder
+data
