@@ -6,18 +6,23 @@ with the pvlib library for photovoltaic system modeling.
 
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
-import aiohttp
 import pandas as pd
 from pydantic import ConfigDict, Field, model_validator
-from tenacity import retry, stop_after_attempt, wait_fixed
 
+from app.core.utils.api_clients import BaseAPIClient
 from app.core.utils.caching import BaseProvider
+from app.core.utils.data_processing import (
+    resample_timeseries_data,
+    standardize_column_names,
+)
+from app.core.utils.date_handling import TimeInterval, parse_date_string
 from app.core.utils.location import GeospatialLocation
 from app.core.utils.logging import get_logger
 
 logger = get_logger("weather")
+
 
 # --- Constants and Enums ---
 
@@ -40,13 +45,17 @@ class WeatherDataColumns(str, Enum):
 # --- Open-Meteo API Client ---
 
 
-class OpenMeteoClient:
+class OpenMeteoClient(BaseAPIClient):
     """
     An asynchronous client for fetching weather data from the Open-Meteo API.
-    It handles API requests and retries.
+    It handles API requests and retries using the base API client functionality.
     """
 
-    @retry(stop=stop_after_attempt(RETRY_COUNT), wait=wait_fixed(1))
+    def __init__(self):
+        """Initialize the Open-Meteo client with appropriate retry settings."""
+        # Don't set a base URL since we use different endpoints for date ranges
+        super().__init__(base_url="", retry_count=RETRY_COUNT, retry_wait=1)
+
     async def get_weather_data(
         self,
         latitude: float,
@@ -54,6 +63,7 @@ class OpenMeteoClient:
         start_date: str,
         end_date: str,
         variables: List[str],
+        interval: Optional["TimeInterval"] = None,
     ) -> pd.DataFrame:
         """
         Fetches weather data for a given location and time range.
@@ -65,14 +75,33 @@ class OpenMeteoClient:
             start_date: The start date in YYYY-MM-DD format.
             end_date: The end date in YYYY-MM-DD format.
             variables: A list of weather variables to fetch.
+            interval: Time interval for data (Note: Open-Meteo API only supports
+                hourly for most data).
 
         Returns:
             A pandas DataFrame with the requested weather data.
 
         Raises:
             aiohttp.ClientError: If the API request fails.
+            ValueError: If interval is not supported by Open-Meteo API.
         """
-        start_date_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        # Import here to avoid circular imports
+        from app.core.utils.date_handling import TimeInterval
+
+        if interval is None:
+            interval = TimeInterval.HOURLY
+
+        # Always fetch hourly data from Open-Meteo API
+        # We'll resample to other intervals if needed
+        if interval != TimeInterval.HOURLY:
+            logger.warning(
+                f"Open-Meteo API doesn't natively support {interval.display_name} "
+                f"intervals. Fetching hourly data and will resample to "
+                f"{interval.display_name}."
+            )
+
+        start_date_dt = parse_date_string(start_date)
+        end_date_dt = parse_date_string(end_date)
         ninety_days_ago = datetime.now().date() - timedelta(days=90)
 
         api_url = (
@@ -81,46 +110,56 @@ class OpenMeteoClient:
             else OPEN_METEO_FORECAST_API_URL
         )
 
+        # Convert datetime strings to date-only format for API (YYYY-MM-DD)
+        api_start_date = start_date_dt.strftime("%Y-%m-%d")
+        api_end_date = end_date_dt.strftime("%Y-%m-%d")
+
+        # Always use hourly data from the API
         params = {
             "latitude": latitude,
             "longitude": longitude,
-            "start_date": start_date,
-            "end_date": end_date,
+            "start_date": api_start_date,
+            "end_date": api_end_date,
             "hourly": ",".join(variables),
             "timezone": "auto",
         }
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(api_url, params=params) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-                    return self._process_response(data, variables)
-            except aiohttp.ClientError as e:
-                logger.error(f"Error fetching weather data: {e}")
-                raise
+
+        # Use the base API client functionality for the request
+        # Since we need different base URLs, we'll override the URL construction
+        endpoint = api_url
+        data = await self.get_json(endpoint, params)
+        df = self._process_response(data, variables)
+
+        # Resample if needed (all intervals except hourly need resampling)
+        if interval != TimeInterval.HOURLY:
+            df = resample_timeseries_data(df, interval)
+
+        return df
 
     def _process_response(
-        self, response_data: dict, variables: List[str]
+        self,
+        response_data: dict,
+        variables: List[str],
     ) -> pd.DataFrame:
-        """Processes the JSON response from the Open-Meteo API."""
-        hourly_data = response_data["hourly"]
+        """Processes the JSON response from the Open-Meteo API (hourly data only)."""
 
-        time_range = pd.to_datetime(hourly_data["time"])
+        # Always use hourly data section
+        data_section = response_data.get("hourly", {})
 
-        data = {var: hourly_data[var] for var in variables}
+        time_range = pd.to_datetime(data_section["time"])
+        data = {var: data_section[var] for var in variables}
 
         df = pd.DataFrame(data=data, index=time_range)
         df.index.name = WeatherDataColumns.DATE_TIME.value
 
-        # Rename columns to pvlib standard
-        return df.rename(
-            columns={
-                "shortwave_radiation": "ghi",
-                "direct_normal_irradiance": "dni",
-                "diffuse_radiation": "dhi",
-                "temperature_2m": "temp_air",
-            }
-        )
+        # Rename columns to pvlib standard (hourly data only)
+        column_mapping = {
+            "shortwave_radiation": "ghi",
+            "direct_normal_irradiance": "dni",
+            "diffuse_radiation": "dhi",
+            "temperature_2m": "temp_air",
+        }
+        return standardize_column_names(df, column_mapping)
 
 
 # --- Weather Data Provider ---
@@ -145,8 +184,8 @@ class WeatherProvider(BaseProvider):
         """
         Validates that forecast requests do not exceed the maximum allowed days.
         """
-        start_date = datetime.strptime(self.start_date, "%Y-%m-%d").date()
-        end_date = datetime.strptime(self.end_date, "%Y-%m-%d").date()
+        start_date = parse_date_string(self.start_date)
+        end_date = parse_date_string(self.end_date)
         today = datetime.now().date()
 
         # Check if the request is for a future forecast, considering a small buffer
@@ -188,4 +227,5 @@ class WeatherProvider(BaseProvider):
             start_date=start_date,
             end_date=end_date,
             variables=variables_str,
+            interval=self.interval,  # Pass the interval to the client
         )

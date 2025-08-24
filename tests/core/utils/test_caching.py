@@ -2,9 +2,41 @@
 Tests for the generic caching utility.
 """
 
+from datetime import datetime
+from typing import List, Tuple
+
 import pandas as pd
 
-from app.core.utils.caching import _find_missing_date_ranges
+from app.core.utils.date_handling import TimeInterval, find_missing_intervals
+
+
+def _find_missing_date_ranges(
+    start_date: str,
+    end_date: str,
+    existing_dates: pd.DatetimeIndex,
+    interval: TimeInterval = TimeInterval.HOURLY,
+) -> List[Tuple[str, str]]:
+    """
+    Legacy wrapper function for tests to maintain compatibility.
+    Converts string dates to datetime objects and back to strings.
+    """
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(
+        hour=23, minute=59, second=59
+    )
+
+    missing_intervals = find_missing_intervals(
+        start_dt, end_dt, existing_dates, interval
+    )
+
+    # Convert datetime tuples back to string format for test compatibility
+    gaps = []
+    for start, end in missing_intervals:
+        start_gap = start.strftime("%Y-%m-%d")
+        end_gap = end.strftime("%Y-%m-%d")
+        gaps.append((start_gap, end_gap))
+
+    return gaps
 
 
 def test_find_missing_ranges_no_gaps():

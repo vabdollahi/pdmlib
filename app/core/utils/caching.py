@@ -3,11 +3,16 @@ This module provides a generic, cache-first data provider framework.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.utils.date_handling import (
+    TimeInterval,
+    find_missing_intervals,
+    normalize_date_range,
+    parse_datetime_input,
+)
 from app.core.utils.location import Location
 from app.core.utils.logging import get_logger
 from app.core.utils.storage import DataStorage
@@ -15,69 +20,48 @@ from app.core.utils.storage import DataStorage
 logger = get_logger("cache")
 
 
-def _find_missing_date_ranges(
-    start_date: str, end_date: str, existing_dates: pd.DatetimeIndex
-) -> List[Tuple[str, str]]:
-    """
-    Compares a required date range with existing dates to find gaps.
-
-    Args:
-        start_date: The required start date (YYYY-MM-DD).
-        end_date: The required end date (YYYY-MM-DD).
-        existing_dates: A DatetimeIndex of dates that are already available.
-
-    Returns:
-        A list of tuples, where each tuple contains the start and end date
-        of a missing period.
-    """
-    required_range = pd.date_range(
-        start=start_date, end=f"{end_date} 23:59:59", freq="h", tz="UTC"
-    )
-
-    # Ensure existing_dates is timezone-aware (UTC) to match required_range
-    if existing_dates.tz is None:
-        existing_dates = existing_dates.tz_localize("UTC")
-    else:
-        existing_dates = existing_dates.tz_convert("UTC")
-
-    missing_dates = required_range.difference(existing_dates)
-
-    if missing_dates.empty:
-        return []
-
-    # Find contiguous blocks of missing dates. A new block starts when the
-    # time difference to the previous entry is > 1 hour.
-    missing_series = missing_dates.to_series()
-    contiguous_blocks = (missing_series.diff().dt.total_seconds().gt(3600)).cumsum()
-    groups = missing_series.groupby(contiguous_blocks)
-
-    gaps = []
-    for _, group in groups:
-        start_gap = group.index.min().strftime("%Y-%m-%d")
-        end_gap = group.index.max().strftime("%Y-%m-%d")
-        gaps.append((start_gap, end_gap))
-
-    return gaps
-
-
 class BaseProvider(BaseModel, ABC):
     """
     An abstract base class for data providers that implements a cache-first
-    strategy for data retrieval.
+    strategy for data retrieval with configurable time intervals.
     """
 
     location: Location
-    start_date: str = Field(description="Start date in YYYY-MM-DD format.")
-    end_date: str = Field(description="End date in YYYY-MM-DD format.")
+    start_date: str = Field(
+        description="Start date in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format."
+    )
+    end_date: str = Field(
+        description="End date in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format."
+    )
     organization: str = Field(description="Name of the organization.")
     asset: str = Field(description="Name of the asset.")
     data_type: str = Field(description="Type of data being handled (e.g., 'weather').")
+    interval: TimeInterval = Field(
+        default=TimeInterval.HOURLY,
+        description="Time interval for data fetching (5min, 15min, 1h, 1d).",
+    )
     storage: DataStorage = Field(
         default_factory=DataStorage,
         description="Data storage handler for caching.",
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def model_post_init(self, __context):
+        """Apply interval rounding after model validation."""
+        # Apply interval rounding to ensure start/end times align with boundaries
+        start_rounded, end_rounded = normalize_date_range(
+            self.start_date, self.end_date, interval=self.interval
+        )
+
+        # Convert back to string format for consistency with existing API
+        self.start_date = start_rounded.strftime("%Y-%m-%d %H:%M:%S")
+        self.end_date = end_rounded.strftime("%Y-%m-%d %H:%M:%S")
+
+        logger.info(
+            f"Rounded to {self.interval.display_name} intervals: "
+            f"{self.start_date} to {self.end_date}"
+        )
 
     @abstractmethod
     async def _fetch_range(self, start_date: str, end_date: str) -> pd.DataFrame:
@@ -126,15 +110,26 @@ class BaseProvider(BaseModel, ABC):
             end_date=self.end_date,
         )
 
-        # 2. Identify missing date ranges
+        # 2. Identify missing date ranges using the enhanced date handling utility
         if cached_data.empty:
             # No cached data, fetch everything
             missing_ranges = [(self.start_date, self.end_date)]
         else:
+            # Convert date strings to datetime objects for the utility function
+            start_dt = parse_datetime_input(self.start_date)
+            end_dt = parse_datetime_input(self.end_date)
             cached_data_index = pd.to_datetime(cached_data.index)
-            missing_ranges = _find_missing_date_ranges(
-                self.start_date, self.end_date, cached_data_index
+
+            # Use the enhanced missing intervals detection
+            missing_intervals = find_missing_intervals(
+                start_dt, end_dt, cached_data_index, self.interval
             )
+
+            # Convert datetime tuples back to string format for API compatibility
+            missing_ranges = [
+                (start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S"))
+                for start, end in missing_intervals
+            ]
 
         if not missing_ranges and not cached_data.empty:
             logger.info("All data found in cache")

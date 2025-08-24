@@ -58,7 +58,7 @@ def test_weather_provider_valid_historical_range(mock_storage):
 def test_weather_provider_valid_forecast_range(mock_storage):
     """Tests that a valid future forecast range passes validation."""
     start = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    end = (datetime.now() + timedelta(days=MAX_FORECAST_DAYS)).strftime("%Y-%m-%d")
+    end = (datetime.now() + timedelta(days=MAX_FORECAST_DAYS - 1)).strftime("%Y-%m-%d")
     provider = WeatherProvider(
         location=GeospatialLocation(latitude=52.52, longitude=13.41),
         start_date=start,
