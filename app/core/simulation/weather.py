@@ -139,9 +139,10 @@ class WeatherProvider(BaseModel):
         end_date = datetime.strptime(self.end_date, "%Y-%m-%d").date()
         today = datetime.now().date()
 
-        # Check if the request is for a future forecast
-        if start_date > today:
-            if (end_date - start_date).days > MAX_FORECAST_DAYS:
+        # Check if the request is for a future forecast, considering a small buffer
+        if start_date >= today:
+            # The forecast API allows up to 16 days, but we limit it
+            if (end_date - start_date).days >= MAX_FORECAST_DAYS:
                 raise ValueError(
                     f"Forecast range cannot exceed {MAX_FORECAST_DAYS} days."
                 )

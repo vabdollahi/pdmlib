@@ -1,8 +1,8 @@
 import asyncio
 import os
 
-from app.core.data.storage import DataStorage
 from app.core.simulation.weather import WeatherProvider
+from app.core.utils.storage import DataStorage
 
 
 async def main():
