@@ -9,6 +9,9 @@ import fsspec
 import pandas as pd
 
 from app.core.utils.location import Location
+from app.core.utils.logging import get_logger
+
+logger = get_logger("storage")
 
 
 class DataStorage:
@@ -84,7 +87,7 @@ class DataStorage:
 
             # If a file already exists, read it and merge the new data
             if self.fs.exists(file_path):
-                print(f"Updating existing file: {file_path}")
+                logger.info(f"Updating existing file: {file_path}")
                 with self.fs.open(file_path, "rb") as f:
                     existing_df = pd.read_parquet(f)
                     if "date_time" in existing_df.columns:
@@ -103,7 +106,7 @@ class DataStorage:
             group_to_save_final = group_to_save.reset_index()
             with self.fs.open(file_path, "wb") as f:
                 group_to_save_final.to_parquet(f, engine="pyarrow", index=False)
-            print(f"Data saved to {file_path}")
+            logger.info(f"Data saved to {file_path}")
 
     def read_data_for_range(
         self,

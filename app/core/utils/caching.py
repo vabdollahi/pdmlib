@@ -9,7 +9,10 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.utils.location import Location
+from app.core.utils.logging import get_logger
 from app.core.utils.storage import DataStorage
+
+logger = get_logger("cache")
 
 
 def _find_missing_date_ranges(
@@ -96,13 +99,13 @@ class BaseProvider(BaseModel, ABC):
         """
         # If force_refresh is True, skip cache check and fetch all data
         if force_refresh:
-            print("--- Force refresh requested, fetching fresh data ---")
+            logger.info("Force refresh requested, fetching fresh data")
             fresh_data = await self._fetch_range(
                 start_date=self.start_date, end_date=self.end_date
             )
 
             # Save the fresh data to cache
-            print("\n--- Saving fresh data to Parquet store... ---")
+            logger.info("Saving fresh data to Parquet store")
             self.storage.write_data(
                 df=fresh_data,
                 organization=self.organization,
@@ -134,12 +137,12 @@ class BaseProvider(BaseModel, ABC):
             )
 
         if not missing_ranges and not cached_data.empty:
-            print("--- All data found in cache. ---")
+            logger.info("All data found in cache")
             result = cached_data.loc[self.start_date : self.end_date]
             return result if isinstance(result, pd.DataFrame) else result.to_frame().T
 
         # 3. Fetch new data only for the missing ranges
-        print(f"--- Fetching data for missing ranges: {missing_ranges} ---")
+        logger.info(f"Fetching data for missing ranges: {missing_ranges}")
         new_data_list = []
         for start, end in missing_ranges:
             api_data = await self._fetch_range(start_date=start, end_date=end)
@@ -153,7 +156,7 @@ class BaseProvider(BaseModel, ABC):
 
         # 4. Combine and save the new data
         new_data_df = pd.concat(new_data_list)
-        print("\n--- Saving newly fetched data to Parquet store... ---")
+        logger.info("Saving newly fetched data to Parquet store")
         self.storage.write_data(
             df=new_data_df,
             organization=self.organization,

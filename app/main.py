@@ -3,7 +3,12 @@ import os
 
 from app.core.simulation.weather import WeatherProvider
 from app.core.utils.location import GeospatialLocation
+from app.core.utils.logging import get_logger, setup_logging
 from app.core.utils.storage import DataStorage
+
+# Setup logging
+setup_logging()
+logger = get_logger("main")
 
 
 async def main():

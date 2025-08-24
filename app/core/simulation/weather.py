@@ -15,6 +15,9 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from app.core.utils.caching import BaseProvider
 from app.core.utils.location import GeospatialLocation
+from app.core.utils.logging import get_logger
+
+logger = get_logger("weather")
 
 # --- Constants and Enums ---
 
@@ -93,7 +96,7 @@ class OpenMeteoClient:
                     data = await response.json()
                     return self._process_response(data, variables)
             except aiohttp.ClientError as e:
-                print(f"Error fetching weather data: {e}")
+                logger.error(f"Error fetching weather data: {e}")
                 raise
 
     def _process_response(
