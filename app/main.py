@@ -7,60 +7,44 @@ from app.core.utils.storage import DataStorage
 
 async def main():
     """
-    Main function to demonstrate the data storage and retrieval workflow.
+    Main function to demonstrate the simplified data retrieval workflow.
     """
     # --- Configuration ---
     LATITUDE = 52.52
     LONGITUDE = 13.41
     START_DATE = "2024-01-01"
-    END_DATE = "2024-03-31"  # Fetch a few months of data
+    END_DATE = "2024-03-31"
     ORGANIZATION = "SolarCorp"
     ASSET = "Berlin-PV-Plant-1"
 
     # --- Storage Configuration ---
-    # To use GCS: 'gcs://your-bucket-name/data'
-    # To use local: 'data'
     storage_path = os.getenv("STORAGE_PATH", "data")
     storage = DataStorage(base_path=storage_path)
 
-    # --- Workflow ---
-    print(f"--- Checking for cached data for {ASSET} in {storage_path} ---")
-    # 1. Try to read data from the Parquet store first
-    cached_data = storage.read_data_for_range(
-        organization=ORGANIZATION,
-        asset=ASSET,
+    # --- Create the Provider ---
+    # The WeatherProvider now handles all the caching logic internally.
+    weather_provider = WeatherProvider(
         latitude=LATITUDE,
         longitude=LONGITUDE,
         start_date=START_DATE,
         end_date=END_DATE,
+        organization=ORGANIZATION,
+        asset=ASSET,
+        storage=storage,  # Inject the storage dependency
     )
 
-    if not cached_data.empty:
-        print("--- Data found in cache. ---")
-        print(cached_data.head())
-    else:
-        print("--- No data in cache. Fetching from API... ---")
-        # 2. If not found, fetch it using the WeatherProvider
-        weather_provider = WeatherProvider(
-            latitude=LATITUDE,
-            longitude=LONGITUDE,
-            start_date=START_DATE,
-            end_date=END_DATE,
-        )
-        weather_data = await weather_provider.get_weather_data()
+    # --- Get Data ---
+    # The caller doesn't need to know if it's from cache or API.
+    print(f"--- Getting weather data for {ASSET} ---")
+    weather_data = await weather_provider.get_weather_data()
+    print("\n--- Data retrieved successfully. ---")
+    print(weather_data.head())
 
-        print("--- Data fetched successfully. ---")
-        print(weather_data.head())
-
-        # 3. Save the newly fetched data to the Parquet store
-        print(f"\n--- Saving data to Parquet store in {storage_path}... ---")
-        storage.write_data(
-            df=weather_data,
-            organization=ORGANIZATION,
-            asset=ASSET,
-            latitude=LATITUDE,
-            longitude=LONGITUDE,
-        )
+    # --- Force a Refresh (Example) ---
+    print(f"\n--- Forcing a refresh for {ASSET} to demonstrate... ---")
+    refreshed_data = await weather_provider.get_weather_data(force_refresh=True)
+    print("\n--- Data refreshed successfully. ---")
+    print(refreshed_data.head())
 
     print("\n--- Workflow demonstration complete. ---")
     print("Run this script again to see the caching in action.")

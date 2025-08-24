@@ -6,8 +6,6 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aiohttp import ClientError
-from tenacity import stop_after_attempt
 
 from app.core.simulation.weather import (
     MAX_FORECAST_DAYS,
@@ -16,9 +14,16 @@ from app.core.simulation.weather import (
     OpenMeteoClient,
     WeatherProvider,
 )
+from app.core.utils.storage import DataStorage
 
 
 # --- Fixtures ---
+@pytest.fixture
+def mock_storage():
+    """Provides a mock DataStorage instance using an in-memory filesystem."""
+    return DataStorage(base_path="memory://test-storage")
+
+
 @pytest.fixture
 def mock_api_response():
     """Provides a mock JSON response from the Open-Meteo API."""
@@ -36,32 +41,52 @@ def mock_api_response():
 
 
 # --- WeatherProvider Tests ---
-def test_weather_provider_valid_historical_range():
+def test_weather_provider_valid_historical_range(mock_storage):
     """Tests that a valid historical date range passes validation."""
     provider = WeatherProvider(
-        latitude=52.52, longitude=13.41, start_date="2024-01-01", end_date="2024-01-10"
+        latitude=52.52,
+        longitude=13.41,
+        start_date="2024-01-01",
+        end_date="2024-01-10",
+        organization="test-org",
+        asset="test-asset",
+        storage=mock_storage,
     )
     assert provider is not None
 
 
-def test_weather_provider_valid_forecast_range():
+def test_weather_provider_valid_forecast_range(mock_storage):
     """Tests that a valid future forecast range passes validation."""
     start = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     end = (datetime.now() + timedelta(days=MAX_FORECAST_DAYS)).strftime("%Y-%m-%d")
     provider = WeatherProvider(
-        latitude=52.52, longitude=13.41, start_date=start, end_date=end
+        latitude=52.52,
+        longitude=13.41,
+        start_date=start,
+        end_date=end,
+        organization="test-org",
+        asset="test-asset",
+        storage=mock_storage,
     )
     assert provider is not None
 
 
-def test_weather_provider_invalid_forecast_range_raises_error():
+def test_weather_provider_invalid_forecast_range_raises_error(mock_storage):
     """Tests that a forecast range exceeding the max limit raises a ValueError."""
     start = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     end = (datetime.now() + timedelta(days=MAX_FORECAST_DAYS + 1)).strftime("%Y-%m-%d")
     with pytest.raises(
         ValueError, match=f"Forecast range cannot exceed {MAX_FORECAST_DAYS} days."
     ):
-        WeatherProvider(latitude=52.52, longitude=13.41, start_date=start, end_date=end)
+        WeatherProvider(
+            latitude=52.52,
+            longitude=13.41,
+            start_date=start,
+            end_date=end,
+            organization="test-org",
+            asset="test-asset",
+            storage=mock_storage,
+        )
 
 
 # --- OpenMeteoClient Tests ---
