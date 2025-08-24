@@ -35,13 +35,13 @@ async def main():
     # --- Get Data ---
     # The caller doesn't need to know if it's from cache or API.
     print(f"--- Getting weather data for {ASSET} ---")
-    weather_data = await weather_provider.get_weather_data()
+    weather_data = await weather_provider.get_data()
     print("\n--- Data retrieved successfully. ---")
     print(weather_data.head())
 
     # --- Force a Refresh (Example) ---
     print(f"\n--- Forcing a refresh for {ASSET} to demonstrate... ---")
-    refreshed_data = await weather_provider.get_weather_data(force_refresh=True)
+    refreshed_data = await weather_provider.get_data(force_refresh=True)
     print("\n--- Data refreshed successfully. ---")
     print(refreshed_data.head())
 

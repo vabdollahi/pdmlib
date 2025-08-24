@@ -155,10 +155,10 @@ class DataStorage:
                 year, month = map(int, filename.replace(".parquet", "").split("_"))
 
                 # Check if the file's month is within the requested date range
+                file_date = pd.Timestamp(year=year, month=month, day=1)
                 if not (
-                    (year == start.year and month >= start.month)
-                    or (year == end.year and month <= end.month)
-                    or (start.year < year < end.year)
+                    file_date.to_period("M") >= start.to_period("M")
+                    and file_date.to_period("M") <= end.to_period("M")
                 ):
                     continue
 

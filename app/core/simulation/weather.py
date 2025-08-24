@@ -10,11 +10,11 @@ from typing import List
 
 import aiohttp
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from app.core.utils.caching import BaseProvider
 from app.core.utils.location import GeospatialLocation
-from app.core.utils.storage import DataStorage
 
 # --- Constants and Enums ---
 
@@ -84,6 +84,7 @@ class OpenMeteoClient:
             "start_date": start_date,
             "end_date": end_date,
             "hourly": ",".join(variables),
+            "timezone": "auto",
         }
         async with aiohttp.ClientSession() as session:
             try:
@@ -122,25 +123,19 @@ class OpenMeteoClient:
 # --- Weather Data Provider ---
 
 
-class WeatherProvider(BaseModel):
+class WeatherProvider(BaseProvider):
     """
     Provides weather data, using a caching layer before falling back to the
     Open-Meteo API. This class is the main entry point for fetching weather data.
     """
 
-    location: GeospatialLocation = Field(
-        description="The location for the weather data."
-    )
-    start_date: str = Field(description="Start date in YYYY-MM-DD format.")
-    end_date: str = Field(description="End date in YYYY-MM-DD format.")
-    organization: str = Field(description="Name of the organization.")
-    asset: str = Field(description="Name of the asset.")
-    storage: DataStorage = Field(
-        default_factory=DataStorage,
-        description="Data storage handler for caching.",
-    )
+    data_type: str = Field(default="weather", description="Type of data.")
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def __init__(self, location: GeospatialLocation, **kwargs):
+        """Initialize with a GeospatialLocation."""
+        super().__init__(location=location, **kwargs)
 
     @model_validator(mode="after")
     def validate_date_range(self) -> "WeatherProvider":
@@ -160,32 +155,17 @@ class WeatherProvider(BaseModel):
                 )
         return self
 
-    async def get_weather_data(self, force_refresh: bool = False) -> pd.DataFrame:
+    async def _fetch_range(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
-        Retrieves weather data, utilizing a cache-first strategy.
+        Fetches weather data for a specific date range from the Open-Meteo API.
 
         Args:
-            force_refresh: If True, bypass the cache and fetch fresh data from the API.
+            start_date: The start date in YYYY-MM-DD format.
+            end_date: The end date in YYYY-MM-DD format.
 
         Returns:
-            A pandas DataFrame containing the weather data.
+            A pandas DataFrame with the requested weather data.
         """
-        # 1. Check the cache first
-        if not force_refresh:
-            cached_data = self.storage.read_data_for_range(
-                organization=self.organization,
-                asset=self.asset,
-                data_type="weather",
-                location=self.location,
-                start_date=self.start_date,
-                end_date=self.end_date,
-            )
-            if not cached_data.empty:
-                print("--- Data found in cache. ---")
-                return cached_data
-
-        # 2. If no cache or refresh is forced, fetch from API
-        print("--- No data in cache or refresh forced. Fetching from API... ---")
         client = OpenMeteoClient()
         variables = [
             WeatherDataColumns.GHI,
@@ -194,22 +174,15 @@ class WeatherProvider(BaseModel):
             WeatherDataColumns.TEMPERATURE,
         ]
         variables_str = [v.value for v in variables]
-        api_data = await client.get_weather_data(
+
+        # Ensure we have a GeospatialLocation
+        if not isinstance(self.location, GeospatialLocation):
+            raise ValueError("WeatherProvider requires a GeospatialLocation")
+
+        return await client.get_weather_data(
             latitude=self.location.latitude,
             longitude=self.location.longitude,
-            start_date=self.start_date,
-            end_date=self.end_date,
+            start_date=start_date,
+            end_date=end_date,
             variables=variables_str,
         )
-
-        # 3. Save the newly fetched data to the cache
-        print("\n--- Saving data to Parquet store... ---")
-        self.storage.write_data(
-            df=api_data,
-            organization=self.organization,
-            asset=self.asset,
-            data_type="weather",
-            location=self.location,
-        )
-
-        return api_data
