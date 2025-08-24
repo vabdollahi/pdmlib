@@ -82,6 +82,14 @@ class SimulationParams(TypedDict, total=False):
     spectral_model: Any
 
 
+class ShadingObstacle(TypedDict):
+    """Type definition for shading obstacle."""
+
+    azimuth: float
+    elevation: float
+    distance: float
+
+
 class PVLibResultsColumns(Enum):
     """Column names for PVLib simulation results."""
 
@@ -250,6 +258,415 @@ class TemperatureModel(BaseModel, PvLibComponentCreatorMixin):
             raise
 
 
+class IAMModel(BaseModel, PvLibComponentCreatorMixin):
+    """Incidence Angle Modifier model configuration."""
+
+    model: Literal["physical", "ashrae", "sapm", "martin_ruiz", "schlick"] = Field(
+        default="physical", description="IAM model type"
+    )
+    # ASHRAE model parameters
+    ashrae_b: float = Field(
+        default=0.05, ge=0, le=0.5, description="ASHRAE model b parameter"
+    )
+    # Martin-Ruiz model parameters
+    martin_ruiz_a_r: float = Field(
+        default=0.16, ge=0, le=1, description="Martin-Ruiz a_r parameter"
+    )
+    # SAPM model parameters (will use module database if available)
+    use_module_iam: bool = Field(
+        default=True, description="Use module IAM parameters from database"
+    )
+
+    def create(self) -> str:
+        """Create IAM model specification for ModelChain."""
+        logger.debug(f"Created IAM model: {self.model}")
+        return self.model
+
+    def get_iam_parameters(self) -> Optional[Dict[str, float]]:
+        """Get model-specific IAM parameters."""
+        if self.model == "ashrae":
+            return {"b": self.ashrae_b}
+        elif self.model == "martin_ruiz":
+            return {"a_r": self.martin_ruiz_a_r}
+        return None
+
+
+class BifacialConfiguration(BaseModel, PvLibComponentCreatorMixin):
+    """Bifacial PV module configuration."""
+
+    enable_bifacial: bool = Field(default=False, description="Enable bifacial modeling")
+    bifaciality: float = Field(
+        default=0.7,
+        ge=0,
+        le=1,
+        description="Bifaciality factor (rear/front efficiency ratio)",
+    )
+    row_height: float = Field(
+        default=1.5, gt=0, le=10, description="Height of PV row center above ground (m)"
+    )
+    row_width: float = Field(
+        default=2.0, gt=0, le=10, description="Width of PV row (m)"
+    )
+    pitch: float = Field(
+        default=6.0, gt=0, le=50, description="Distance between row centers (m)"
+    )
+    albedo: float = Field(
+        default=0.25, ge=0, le=1, description="Ground reflectance (albedo)"
+    )
+    # Advanced bifacial parameters
+    hub_height: Optional[float] = Field(
+        default=None, ge=0, le=10, description="Height to bottom of modules (m)"
+    )
+    view_factor_model: Literal["isotropic", "nishioka"] = Field(
+        default="isotropic", description="View factor model for rear irradiance"
+    )
+
+    def create(self) -> Dict[str, Any]:
+        """Create bifacial configuration parameters."""
+        if not self.enable_bifacial:
+            return {}
+
+        config = {
+            "bifaciality": self.bifaciality,
+            "row_height": self.row_height,
+            "row_width": self.row_width,
+            "pitch": self.pitch,
+            "albedo": self.albedo,
+        }
+
+        if self.hub_height is not None:
+            config["hub_height"] = self.hub_height
+
+        logger.debug(f"Created bifacial configuration: bifaciality={self.bifaciality}")
+        return config
+
+
+class SoilingModel(BaseModel, PvLibComponentCreatorMixin):
+    """Soiling loss model configuration."""
+
+    enable_soiling: bool = Field(
+        default=False, description="Enable soiling loss modeling"
+    )
+    model: Literal["hsu", "kimber", "constant"] = Field(
+        default="hsu", description="Soiling model type"
+    )
+
+    # Constant soiling loss
+    constant_loss_factor: float = Field(
+        default=0.02, ge=0, le=0.5, description="Constant soiling loss factor"
+    )
+
+    # Hsu model parameters
+    cleaning_threshold: float = Field(
+        default=0.5,
+        ge=0,
+        le=10,
+        description="Daily precipitation cleaning threshold (mm)",
+    )
+    tilt_factor: float = Field(
+        default=1.0, ge=0, le=2, description="Tilt correction factor"
+    )
+    pm2_5_concentration: float = Field(
+        default=15.0, ge=0, le=200, description="PM2.5 concentration (μg/m³)"
+    )
+
+    # Kimber model parameters
+    deposition_rate: float = Field(
+        default=0.002, ge=0, le=0.1, description="Daily deposition rate (1/day)"
+    )
+    cleaning_threshold_kimber: float = Field(
+        default=1.0,
+        ge=0,
+        le=10,
+        description="Precipitation cleaning threshold for Kimber model (mm)",
+    )
+
+    def create(self) -> Optional[Dict[str, Any]]:
+        """Create soiling model configuration."""
+        if not self.enable_soiling:
+            return None
+
+        if self.model == "constant":
+            logger.debug(f"Created constant soiling model: {self.constant_loss_factor}")
+            return {"model": "constant", "loss_factor": self.constant_loss_factor}
+        elif self.model == "hsu":
+            config = {
+                "model": "hsu",
+                "cleaning_threshold": self.cleaning_threshold,
+                "tilt_factor": self.tilt_factor,
+                "pm2_5": self.pm2_5_concentration,
+            }
+            logger.debug(
+                f"Created Hsu soiling model: "
+                f"cleaning_threshold={self.cleaning_threshold}mm"
+            )
+            return config
+        elif self.model == "kimber":
+            config = {
+                "model": "kimber",
+                "deposition_rate": self.deposition_rate,
+                "cleaning_threshold": self.cleaning_threshold_kimber,
+            }
+            logger.debug(
+                f"Created Kimber soiling model: deposition_rate={self.deposition_rate}"
+            )
+            return config
+        return None
+
+
+class SnowModel(BaseModel, PvLibComponentCreatorMixin):
+    """Snow coverage model configuration."""
+
+    enable_snow_modeling: bool = Field(
+        default=False, description="Enable snow coverage modeling"
+    )
+    model: Literal["nrel", "townsend"] = Field(
+        default="nrel", description="Snow model type"
+    )
+
+    # NREL model parameters
+    temp_threshold_c: float = Field(
+        default=2.0,
+        ge=-10,
+        le=10,
+        description="Temperature threshold for snow accumulation (°C)",
+    )
+    tilt_factor: float = Field(
+        default=1.0, ge=0, le=2, description="Tilt-dependent snow sliding factor"
+    )
+
+    # Townsend model parameters
+    snow_density: float = Field(
+        default=300.0, ge=100, le=800, description="Snow density (kg/m³)"
+    )
+    slide_angle_deg: float = Field(
+        default=30.0,
+        ge=0,
+        le=90,
+        description="Critical angle for snow sliding (degrees)",
+    )
+
+    def create(self) -> Optional[Dict[str, Any]]:
+        """Create snow model configuration."""
+        if not self.enable_snow_modeling:
+            return None
+
+        if self.model == "nrel":
+            config = {
+                "model": "nrel",
+                "temp_threshold": self.temp_threshold_c,
+                "tilt_factor": self.tilt_factor,
+            }
+            logger.debug(
+                f"Created NREL snow model: temp_threshold={self.temp_threshold_c}°C"
+            )
+            return config
+        elif self.model == "townsend":
+            config = {
+                "model": "townsend",
+                "snow_density": self.snow_density,
+                "slide_angle": self.slide_angle_deg,
+            }
+            logger.debug(
+                f"Created Townsend snow model: slide_angle={self.slide_angle_deg}°"
+            )
+            return config
+        return None
+
+
+class ShadingModel(BaseModel, PvLibComponentCreatorMixin):
+    """Array shading model configuration."""
+
+    enable_self_shading: bool = Field(
+        default=False, description="Enable inter-row self-shading"
+    )
+    enable_near_shading: bool = Field(
+        default=False, description="Enable near-field shading obstacles"
+    )
+
+    # Self-shading parameters (for fixed arrays)
+    pitch: Optional[float] = Field(
+        default=None,
+        gt=0,
+        le=50,
+        description="Row spacing for self-shading calculation (m)",
+    )
+    row_height: Optional[float] = Field(
+        default=None, gt=0, le=10, description="Height of PV modules (m)"
+    )
+    row_width: Optional[float] = Field(
+        default=None, gt=0, le=10, description="Width of PV modules (m)"
+    )
+
+    # Near-field shading obstacles
+    obstacles: List[ShadingObstacle] = Field(
+        default_factory=list, description="List of shading obstacles"
+    )
+
+    def create(self) -> Optional[Dict[str, Any]]:
+        """Create shading model configuration."""
+        if not self.enable_self_shading and not self.enable_near_shading:
+            return None
+
+        config = {}
+
+        if self.enable_self_shading and self.pitch is not None:
+            config["self_shading"] = {
+                "pitch": self.pitch,
+                "row_height": self.row_height,
+                "row_width": self.row_width,
+            }
+            logger.debug(f"Created self-shading model: pitch={self.pitch}m")
+
+        if self.enable_near_shading and self.obstacles:
+            config["near_shading"] = {"obstacles": self.obstacles}
+            logger.debug(f"Created near-shading model: {len(self.obstacles)} obstacles")
+
+        return config if config else None
+
+
+class SpectralModel(BaseModel, PvLibComponentCreatorMixin):
+    """Advanced spectral model configuration."""
+
+    model: Literal["no_loss", "first_solar", "sapm", "caballero", "jrc"] = Field(
+        default="no_loss", description="Spectral model type"
+    )
+
+    # Module technology for advanced spectral models
+    module_type: Optional[
+        Literal["cdte", "amorphous_silicon", "cigs", "crystalline_silicon"]
+    ] = Field(default=None, description="Module technology type for spectral modeling")
+
+    # Use precipitable water for advanced models
+    precipitable_water: bool = Field(
+        default=False, description="Include precipitable water effects"
+    )
+
+    # First Solar specific parameters
+    first_solar_module: Optional[str] = Field(
+        default=None, description="First Solar module type identifier"
+    )
+
+    def create(self) -> str:
+        """Create spectral model specification."""
+        logger.debug(f"Created spectral model: {self.model}")
+        return self.model
+
+    def get_spectral_parameters(self) -> Optional[Dict[str, Any]]:
+        """Get model-specific spectral parameters."""
+        if self.model == "first_solar" and self.first_solar_module:
+            return {"module": self.first_solar_module}
+        elif self.module_type:
+            return {"module_type": self.module_type}
+        return None
+
+
+class DCLossModel(BaseModel, PvLibComponentCreatorMixin):
+    """DC circuit loss model configuration."""
+
+    enable_ohmic_losses: bool = Field(
+        default=False, description="Enable DC ohmic/resistive losses"
+    )
+
+    # Basic DC losses
+    dc_wiring_loss_percent: float = Field(
+        default=0.02, ge=0, le=0.1, description="DC wiring losses (%)"
+    )
+    connection_loss_percent: float = Field(
+        default=0.005, ge=0, le=0.05, description="Connection losses (%)"
+    )
+    mismatch_loss_percent: float = Field(
+        default=0.02, ge=0, le=0.1, description="Module mismatch losses (%)"
+    )
+
+    # Advanced ohmic losses
+    resistance_per_string_ohm: Optional[float] = Field(
+        default=None, ge=0, le=10, description="Total string resistance (Ohms)"
+    )
+    voltage_dependent: bool = Field(
+        default=False, description="Enable voltage-dependent loss modeling"
+    )
+
+    def create(self) -> Optional[Dict[str, Any]]:
+        """Create DC loss model configuration."""
+        total_basic_losses = (
+            self.dc_wiring_loss_percent
+            + self.connection_loss_percent
+            + self.mismatch_loss_percent
+        )
+
+        config = {"basic_losses": total_basic_losses}
+
+        if self.enable_ohmic_losses and self.resistance_per_string_ohm is not None:
+            config["ohmic_losses"] = {
+                "resistance": self.resistance_per_string_ohm,
+                "voltage_dependent": self.voltage_dependent,
+            }
+            logger.debug(
+                f"Created DC loss model with ohmic losses: "
+                f"{self.resistance_per_string_ohm}Ω"
+            )
+        else:
+            logger.debug(
+                f"Created basic DC loss model: {total_basic_losses:.1%} total losses"
+            )
+
+        return config
+
+
+class AdvancedInverterModel(BaseModel, PvLibComponentCreatorMixin):
+    """Advanced inverter model configuration."""
+
+    ac_model: Literal["adr", "pvwatts", "sandia"] = Field(
+        default="pvwatts", description="AC inverter model type"
+    )
+
+    # Performance degradation
+    enable_degradation: bool = Field(
+        default=False, description="Enable performance degradation modeling"
+    )
+    degradation_rate_per_year: float = Field(
+        default=0.005, ge=0, le=0.02, description="Annual performance degradation rate"
+    )
+
+    # ADR model specific parameters (for PV performance ratio modeling)
+    enable_adr: bool = Field(
+        default=False, description="Enable ADR (performance ratio) modeling"
+    )
+    reference_irradiance: float = Field(
+        default=1000.0, gt=0, le=1500, description="Reference irradiance for ADR (W/m²)"
+    )
+    reference_temperature: float = Field(
+        default=25.0, ge=-10, le=50, description="Reference temperature for ADR (°C)"
+    )
+
+    def create(self) -> str:
+        """Create advanced inverter model specification."""
+        logger.debug(f"Created advanced inverter model: {self.ac_model}")
+        return self.ac_model
+
+    def get_degradation_parameters(self) -> Optional[Dict[str, float]]:
+        """Get degradation parameters if enabled."""
+        if self.enable_degradation:
+            return {"degradation_rate": self.degradation_rate_per_year}
+        return None
+
+    def get_adr_parameters(self) -> Optional[Dict[str, float]]:
+        """Get ADR model parameters if enabled."""
+        if self.enable_adr:
+            return {
+                "reference_irradiance": self.reference_irradiance,
+                "reference_temperature": self.reference_temperature,
+            }
+        return None
+
+
+class MountBase(BaseModel, PvLibComponentCreatorMixin):
+    """Base class for mount configuration."""
+
+    pass
+
+
 class InverterBase(BaseModel, PvLibComponentCreatorMixin):
     """Base class for inverter configuration."""
 
@@ -393,6 +810,26 @@ class ArraySetup(BaseModel):
         default=None, description="Module temperature model"
     )
 
+    # Advanced modeling options
+    iam_model: Optional[IAMModel] = Field(
+        default=None, description="Incidence angle modifier model"
+    )
+    bifacial_config: Optional[BifacialConfiguration] = Field(
+        default=None, description="Bifacial module configuration"
+    )
+    soiling_model: Optional[SoilingModel] = Field(
+        default=None, description="Soiling loss model"
+    )
+    snow_model: Optional[SnowModel] = Field(
+        default=None, description="Snow coverage model"
+    )
+    shading_model: Optional[ShadingModel] = Field(
+        default=None, description="Shading model configuration"
+    )
+    dc_loss_model: Optional[DCLossModel] = Field(
+        default=None, description="DC circuit loss model"
+    )
+
 
 class PvArray(BaseModel, PvLibComponentCreatorMixin):
     """Configuration for PV array."""
@@ -433,6 +870,11 @@ class PvSystem(BaseModel, PvLibComponentCreatorMixin):
     )
     pv_arrays: List[PvArray] = Field(description="List of PV arrays")
     _max_power_output_ac_w: Optional[float] = None
+
+    # Advanced inverter modeling
+    advanced_inverter_model: Optional[AdvancedInverterModel] = Field(
+        default=None, description="Advanced inverter model configuration"
+    )
 
     def create(self) -> pvsystem.PVSystem:
         """Create a PVLib PVSystem object."""
@@ -509,13 +951,25 @@ class PhysicalSimulation(BaseModel, PvLibComponentCreatorMixin):
         default="no_loss", description="Model for spectral distribution"
     )
 
+    # Advanced simulation models
+    advanced_spectral_model: Optional[SpectralModel] = Field(
+        default=None, description="Advanced spectral model configuration"
+    )
+
     def create(self) -> SimulationParams:
         """Create simulation parameters dictionary."""
         simulation_parameters: SimulationParams = {}
+
+        # Use advanced spectral model if available
+        if self.advanced_spectral_model is not None:
+            simulation_parameters["spectral_model"] = (
+                self.advanced_spectral_model.create()
+            )
+        elif self.spectral_model is not None:
+            simulation_parameters["spectral_model"] = self.spectral_model
+
         if self.aoi_model is not None:
             simulation_parameters["aoi_model"] = self.aoi_model
-        if self.spectral_model is not None:
-            simulation_parameters["spectral_model"] = self.spectral_model
 
         logger.debug(f"Created simulation parameters: {simulation_parameters}")
         return simulation_parameters
