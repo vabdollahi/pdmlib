@@ -13,6 +13,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from app.core.utils.location import GeospatialLocation
 from app.core.utils.storage import DataStorage
 
 # --- Constants and Enums ---
@@ -127,8 +128,9 @@ class WeatherProvider(BaseModel):
     Open-Meteo API. This class is the main entry point for fetching weather data.
     """
 
-    latitude: float = Field(description="Latitude of the location.")
-    longitude: float = Field(description="Longitude of the location.")
+    location: GeospatialLocation = Field(
+        description="The location for the weather data."
+    )
     start_date: str = Field(description="Start date in YYYY-MM-DD format.")
     end_date: str = Field(description="End date in YYYY-MM-DD format.")
     organization: str = Field(description="Name of the organization.")
@@ -174,8 +176,7 @@ class WeatherProvider(BaseModel):
                 organization=self.organization,
                 asset=self.asset,
                 data_type="weather",
-                latitude=self.latitude,
-                longitude=self.longitude,
+                location=self.location,
                 start_date=self.start_date,
                 end_date=self.end_date,
             )
@@ -194,8 +195,8 @@ class WeatherProvider(BaseModel):
         ]
         variables_str = [v.value for v in variables]
         api_data = await client.get_weather_data(
-            latitude=self.latitude,
-            longitude=self.longitude,
+            latitude=self.location.latitude,
+            longitude=self.location.longitude,
             start_date=self.start_date,
             end_date=self.end_date,
             variables=variables_str,
@@ -208,8 +209,7 @@ class WeatherProvider(BaseModel):
             organization=self.organization,
             asset=self.asset,
             data_type="weather",
-            latitude=self.latitude,
-            longitude=self.longitude,
+            location=self.location,
         )
 
         return api_data

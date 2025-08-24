@@ -8,6 +8,8 @@ local and Google Cloud Storage filesystems.
 import fsspec
 import pandas as pd
 
+from app.core.utils.location import Location
+
 
 class DataStorage:
     """
@@ -31,8 +33,7 @@ class DataStorage:
         organization: str,
         asset: str,
         data_type: str,
-        latitude: float,
-        longitude: float,
+        location: Location,
     ) -> str:
         """
         Constructs the path for a given data partition.
@@ -41,14 +42,13 @@ class DataStorage:
             organization: The name of the organization.
             asset: The name of the asset.
             data_type: The type of data (e.g., 'weather', 'price').
-            latitude: The latitude of the location.
-            longitude: The longitude of the location.
+            location: The location object.
 
         Returns:
             The constructed path as a string.
         """
         # Create a location string that is safe for file paths
-        location_str = f"lat{latitude}_lon{longitude}".replace(".", "_")
+        location_str = location.to_path_string()
         # Use standard string join for paths, as fsspec handles the separator
         return "/".join([self.base_path, organization, asset, data_type, location_str])
 
@@ -58,8 +58,7 @@ class DataStorage:
         organization: str,
         asset: str,
         data_type: str,
-        latitude: float,
-        longitude: float,
+        location: Location,
     ):
         """
         Writes a DataFrame to monthly Parquet files within a partitioned structure.
@@ -69,14 +68,13 @@ class DataStorage:
             organization: The name of the organization.
             asset: The name of the asset.
             data_type: The type of data (e.g., 'weather', 'price').
-            latitude: The latitude of the location.
-            longitude: The longitude of the location.
+            location: The location object.
         """
         if not isinstance(df.index, pd.DatetimeIndex):
             raise ValueError("DataFrame index must be a DatetimeIndex.")
 
         partition_path = self._get_partition_path(
-            organization, asset, data_type, latitude, longitude
+            organization, asset, data_type, location
         )
         self.fs.mkdirs(partition_path, exist_ok=True)
 
@@ -112,8 +110,7 @@ class DataStorage:
         organization: str,
         asset: str,
         data_type: str,
-        latitude: float,
-        longitude: float,
+        location: Location,
         start_date: str,
         end_date: str,
     ) -> pd.DataFrame:
@@ -124,8 +121,7 @@ class DataStorage:
             organization: The name of the organization.
             asset: The name of the asset.
             data_type: The type of data (e.g., 'weather', 'price').
-            latitude: The latitude of the location.
-            longitude: The longitude of the location.
+            location: The location object.
             start_date: The start date in YYYY-MM-DD format.
             end_date: The end date in YYYY-MM-DD format.
 
@@ -134,7 +130,7 @@ class DataStorage:
             if no data is found.
         """
         partition_path = self._get_partition_path(
-            organization, asset, data_type, latitude, longitude
+            organization, asset, data_type, location
         )
         if not self.fs.exists(partition_path):
             return pd.DataFrame()

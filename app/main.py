@@ -2,6 +2,7 @@ import asyncio
 import os
 
 from app.core.simulation.weather import WeatherProvider
+from app.core.utils.location import GeospatialLocation
 from app.core.utils.storage import DataStorage
 
 
@@ -10,8 +11,7 @@ async def main():
     Main function to demonstrate the simplified data retrieval workflow.
     """
     # --- Configuration ---
-    LATITUDE = 52.52
-    LONGITUDE = 13.41
+    location = GeospatialLocation(latitude=52.52, longitude=13.41)
     START_DATE = "2024-01-01"
     END_DATE = "2024-03-31"
     ORGANIZATION = "SolarCorp"
@@ -24,8 +24,7 @@ async def main():
     # --- Create the Provider ---
     # The WeatherProvider now handles all the caching logic internally.
     weather_provider = WeatherProvider(
-        latitude=LATITUDE,
-        longitude=LONGITUDE,
+        location=location,
         start_date=START_DATE,
         end_date=END_DATE,
         organization=ORGANIZATION,
@@ -47,8 +46,6 @@ async def main():
     print(refreshed_data.head())
 
     print("\n--- Workflow demonstration complete. ---")
-    print("Run this script again to see the caching in action.")
-    print("To test with GCS, set the STORAGE_PATH environment variable.")
 
 
 # To run:

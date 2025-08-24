@@ -14,6 +14,7 @@ from app.core.simulation.weather import (
     OpenMeteoClient,
     WeatherProvider,
 )
+from app.core.utils.location import GeospatialLocation
 from app.core.utils.storage import DataStorage
 
 
@@ -44,8 +45,7 @@ def mock_api_response():
 def test_weather_provider_valid_historical_range(mock_storage):
     """Tests that a valid historical date range passes validation."""
     provider = WeatherProvider(
-        latitude=52.52,
-        longitude=13.41,
+        location=GeospatialLocation(latitude=52.52, longitude=13.41),
         start_date="2024-01-01",
         end_date="2024-01-10",
         organization="test-org",
@@ -60,8 +60,7 @@ def test_weather_provider_valid_forecast_range(mock_storage):
     start = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     end = (datetime.now() + timedelta(days=MAX_FORECAST_DAYS)).strftime("%Y-%m-%d")
     provider = WeatherProvider(
-        latitude=52.52,
-        longitude=13.41,
+        location=GeospatialLocation(latitude=52.52, longitude=13.41),
         start_date=start,
         end_date=end,
         organization="test-org",
@@ -79,8 +78,7 @@ def test_weather_provider_invalid_forecast_range_raises_error(mock_storage):
         ValueError, match=f"Forecast range cannot exceed {MAX_FORECAST_DAYS} days."
     ):
         WeatherProvider(
-            latitude=52.52,
-            longitude=13.41,
+            location=GeospatialLocation(latitude=52.52, longitude=13.41),
             start_date=start,
             end_date=end,
             organization="test-org",
