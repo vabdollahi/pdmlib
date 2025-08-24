@@ -173,6 +173,7 @@ class WeatherProvider(BaseModel):
             cached_data = self.storage.read_data_for_range(
                 organization=self.organization,
                 asset=self.asset,
+                data_type="weather",
                 latitude=self.latitude,
                 longitude=self.longitude,
                 start_date=self.start_date,
@@ -206,6 +207,7 @@ class WeatherProvider(BaseModel):
             df=api_data,
             organization=self.organization,
             asset=self.asset,
+            data_type="weather",
             latitude=self.latitude,
             longitude=self.longitude,
         )

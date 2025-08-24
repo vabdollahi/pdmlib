@@ -38,15 +38,16 @@ def test_write_data_creates_partitions_and_files(storage, sample_dataframe):
         df=sample_dataframe,
         organization="TestOrg",
         asset="TestAsset",
+        data_type="weather",
         latitude=12.34,
         longitude=56.78,
     )
 
     # Check that files for each month have been created
     expected_files = [
-        "memory://test-data/TestOrg/TestAsset/lat12_34_lon56_78/2024_01.parquet",
-        "memory://test-data/TestOrg/TestAsset/lat12_34_lon56_78/2024_02.parquet",
-        "memory://test-data/TestOrg/TestAsset/lat12_34_lon56_78/2024_03.parquet",
+        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2024_01.parquet",
+        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2024_02.parquet",
+        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2024_03.parquet",
     ]
     for f in expected_files:
         assert storage.fs.exists(f)
@@ -67,6 +68,7 @@ def test_read_data_for_range_combines_and_filters(storage, sample_dataframe):
         df=sample_dataframe,
         organization="TestOrg",
         asset="TestAsset",
+        data_type="weather",
         latitude=12.34,
         longitude=56.78,
     )
@@ -75,6 +77,7 @@ def test_read_data_for_range_combines_and_filters(storage, sample_dataframe):
     df_read = storage.read_data_for_range(
         organization="TestOrg",
         asset="TestAsset",
+        data_type="weather",
         latitude=12.34,
         longitude=56.78,
         start_date="2024-01-20",
@@ -95,9 +98,65 @@ def test_read_from_non_existent_path_returns_empty(storage):
     df_read = storage.read_data_for_range(
         organization="NoOrg",
         asset="NoAsset",
+        data_type="weather",
         latitude=0,
         longitude=0,
         start_date="2024-01-01",
         end_date="2024-01-31",
     )
     assert df_read.empty
+
+
+def test_write_data_updates_existing_file(storage):
+    """
+    Tests that writing data to a month that already has a file correctly
+    updates and merges the data without losing existing records.
+    """
+    # Create initial data for January
+    jan_dates_1 = pd.to_datetime(pd.date_range("2024-01-01", "2024-01-10", freq="D"))
+    jan_df_1 = pd.DataFrame({"value": range(10)}, index=jan_dates_1)
+    jan_df_1.index.name = "date_time"
+
+    storage.write_data(
+        df=jan_df_1,
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="test_data",
+        latitude=12.34,
+        longitude=56.78,
+    )
+
+    # Create new data for January, partially overlapping
+    jan_dates_2 = pd.to_datetime(pd.date_range("2024-01-05", "2024-01-15", freq="D"))
+    # Use different values to check the update
+    jan_df_2 = pd.DataFrame({"value": range(100, 111)}, index=jan_dates_2)
+    jan_df_2.index.name = "date_time"
+
+    storage.write_data(
+        df=jan_df_2,
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="test_data",
+        latitude=12.34,
+        longitude=56.78,
+    )
+
+    # Read the entire month back
+    full_jan_data = storage.read_data_for_range(
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="test_data",
+        latitude=12.34,
+        longitude=56.78,
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+    )
+
+    # Check that the total number of days is correct (15 days)
+    assert len(full_jan_data) == 15
+    # Check that the first part of the old data is still there
+    assert full_jan_data.loc["2024-01-01"]["value"] == 0
+    # Check that the overlapping data has been updated with the new values
+    assert full_jan_data.loc["2024-01-10"]["value"] == 105
+    # Check that the newest data is present
+    assert full_jan_data.loc["2024-01-15"]["value"] == 110
