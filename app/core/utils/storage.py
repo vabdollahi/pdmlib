@@ -75,10 +75,28 @@ class DataStorage:
         # Group data by year and month and save to separate files
         for (year, month), group in df.groupby([df.index.year, df.index.month]):
             file_path = f"{partition_path}/{year}_{month:02d}.parquet"
+
+            # If a file already exists, read it and merge the new data
+            if self.fs.exists(file_path):
+                print(f"Updating existing file: {file_path}")
+                with self.fs.open(file_path, "rb") as f:
+                    existing_df = pd.read_parquet(f)
+                    if "date_time" in existing_df.columns:
+                        existing_df = existing_df.set_index("date_time")
+
+                # Combine old and new data, remove duplicates, and sort
+                combined_df = pd.concat([existing_df, group])
+                # By keeping the 'last' duplicate, we ensure new data overwrites old
+                group_to_save = combined_df[
+                    ~combined_df.index.duplicated(keep="last")
+                ].sort_index()
+            else:
+                group_to_save = group
+
             # Reset index to make date_time a column, and don't save the new index
-            group_to_save = group.reset_index()
+            group_to_save_final = group_to_save.reset_index()
             with self.fs.open(file_path, "wb") as f:
-                group_to_save.to_parquet(f, engine="pyarrow", index=False)
+                group_to_save_final.to_parquet(f, engine="pyarrow", index=False)
             print(f"Data saved to {file_path}")
 
     def read_data_for_range(
