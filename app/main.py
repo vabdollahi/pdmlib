@@ -1,92 +1,90 @@
 import asyncio
-import os
+import json
+from pathlib import Path
 
+from app.core.simulation.pv_model import PVModel
+from app.core.simulation.pvlib_models import PVLibModel
 from app.core.simulation.weather import WeatherProvider
 from app.core.utils.date_handling import TimeInterval
 from app.core.utils.location import GeospatialLocation
-from app.core.utils.logging import get_logger, setup_logging
 from app.core.utils.storage import DataStorage
 
-# Setup logging
-setup_logging()
-logger = get_logger("main")
+
+async def create_pv_model_example():
+    """Create a PV model using JSON configuration."""
+
+    # Load the 10MW solar farm configuration from JSON
+    config_path = (
+        Path(__file__).parent.parent / "tests" / "config" / "10mw_solar_farm.json"
+    )
+    with open(config_path, "r") as f:
+        pv_config_data = json.load(f)
+
+    # Create location objects
+    location_config = pv_config_data["location"]
+    location_geo = GeospatialLocation(
+        latitude=location_config["latitude"], longitude=location_config["longitude"]
+    )
+
+    # Weather configuration (full year for comprehensive analysis)
+    weather_provider = WeatherProvider(
+        location=location_geo,
+        start_date="2025-06-15",  # Summer period for peak performance
+        end_date="2025-06-17",
+        organization="UtilitySolar",
+        asset=location_config["name"],
+        interval=TimeInterval.HOURLY,
+        storage=DataStorage(base_path="data"),
+    )
+
+    # Create PV model in one shot from JSON using Pydantic's built-in parsing
+    pvlib_model = PVLibModel(**pv_config_data)
+
+    # Create main PV Model
+    pv_model = PVModel(pv_config=pvlib_model, weather_provider=weather_provider)
+
+    return pv_model
 
 
 async def main():
-    """
-    Main function to demonstrate the simplified data retrieval workflow.
-    """
-    # --- Configuration ---
-    location = GeospatialLocation(latitude=52.52, longitude=13.41)
-    START_DATE = "2024-01-01"
-    END_DATE = "2024-03-31"
-    ORGANIZATION = "SolarCorp"
-    ASSET = "Berlin-PV-Plant-1"
+    """Main function to create and run the PV model."""
 
-    # --- Storage Configuration ---
-    storage_path = os.getenv("STORAGE_PATH", "data")
-    storage = DataStorage(base_path=storage_path)
+    try:
+        # Create the PV model
+        pv_model = await create_pv_model_example()
 
-    # --- Create the Provider ---
-    # The WeatherProvider now handles all the caching logic internally
-    # and supports configurable time intervals.
-    weather_provider = WeatherProvider(
-        location=location,
-        start_date=START_DATE,
-        end_date=END_DATE,
-        organization=ORGANIZATION,
-        asset=ASSET,
-        interval=TimeInterval.HOURLY,
-        storage=storage,  # Inject the storage dependency
-    )
+        # Run the simulation
+        print("\n Running PV simulation...")
+        results = await pv_model.run_simulation()
 
-    # --- Get Data ---
-    # The caller doesn't need to know if it's from cache or API.
-    print(f"--- Getting weather data for {ASSET} ---")
-    weather_data = await weather_provider.get_data()
-    print("\n--- Data retrieved successfully. ---")
-    print(weather_data.head())
+        # Display results
+        print("\n Simulation Results:")
+        print(f"   • Data points: {len(results)}")
+        start_time = results.iloc[0]["date_time"]
+        end_time = results.iloc[-1]["date_time"]
+        print(f"   • Time range: {start_time} to {end_time}")
 
-    # --- Demonstrate Different Time Intervals ---
-    print(f"\n--- Demonstrating different time intervals for {ASSET} ---")
+        if "Total AC power (W)" in results.columns:
+            max_power = results["Total AC power (W)"].max()
+            avg_power = results["Total AC power (W)"].mean()
+            total_energy = results["Total AC power (W)"].sum() / 1000
 
-    # Example with 15-minute intervals for detailed intraday analysis
-    weather_provider_15min = WeatherProvider(
-        location=location,
-        start_date="2024-01-01",
-        end_date="2024-01-01",  # Just one day for 15min demo
-        organization=ORGANIZATION,
-        asset=f"{ASSET}-15min",
-        interval=TimeInterval.FIFTEEN_MINUTES,  # Higher resolution
-        storage=storage,
-    )
+            print(f"   • Peak AC Power: {max_power:,.1f} W")
+            print(f"   • Average AC Power: {avg_power:,.1f} W")
+            print(f"   • Total Energy: {total_energy:.2f} kWh")
 
-    print("Fetching 15-minute interval data for detailed analysis...")
-    detailed_data = await weather_provider_15min.get_data()
-    print(f"15-minute data points: {len(detailed_data)}")
-    print(detailed_data.head(3))  # Show first 3 rows
+        # Show sample results
+        print("\n Sample Results:")
+        print(results.head(3).to_string(index=False))
 
-    # Example with daily intervals for long-term trends
-    weather_provider_daily = WeatherProvider(
-        location=location,
-        start_date=START_DATE,
-        end_date=END_DATE,
-        organization=ORGANIZATION,
-        asset=f"{ASSET}-daily",
-        interval=TimeInterval.DAILY,  # Lower resolution, good for trends
-        storage=storage,
-    )
+        print("\n PV Model execution completed successfully!")
+        return 0
 
-    print("\nFetching daily interval data for trend analysis...")
-    trend_data = await weather_provider_daily.get_data()
-    print(f"Daily data points: {len(trend_data)}")
-    print(trend_data.head(3))  # Show first 3 rows
-
-    print("\n--- Workflow demonstration complete. ---")
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
 
 
-# To run:
-# uv run python -m app.main
-# STORAGE_PATH="gcs://my-bucket/data" uv run python -m app.main
 if __name__ == "__main__":
-    asyncio.run(main())
+    exit_code = asyncio.run(main())
+    exit(exit_code)
