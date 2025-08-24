@@ -10,6 +10,7 @@ dependencies = [
     "tenacity>=9.1.2",
     "openmeteo-requests>=1.1.0",
     "requests-cache>=1.2.1",
+    "aiohttp>=3.9.5",
 ]
 
 [dependency-groups]
@@ -21,9 +22,9 @@ dev = [
 ]
 
 [tool.taskipy.tasks]
-test = "pytest app/tests"
-lint = "ruff check app"
-lint-format = "ruff format app && ruff check app --fix"
+test = "pytest app tests"
+lint = "ruff check app tests"
+lint-format = "ruff format app tests && ruff check app --fix"
 
 [tool.ruff]
 line-length = 88

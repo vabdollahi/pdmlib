@@ -8,9 +8,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import List
 
-import openmeteo_requests
+import aiohttp
 import pandas as pd
-import requests_cache
 from pydantic import BaseModel, Field, model_validator
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -18,7 +17,6 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 OPEN_METEO_FORECAST_API_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
-CACHE_EXPIRATION_SECONDS = 3600  # 1 hour
 RETRY_COUNT = 3
 MAX_FORECAST_DAYS = 7
 
@@ -38,18 +36,12 @@ class WeatherDataColumns(str, Enum):
 
 class OpenMeteoClient:
     """
-    A client for fetching weather data from the Open-Meteo API.
-    It handles API requests, caching, and retries.
+    An asynchronous client for fetching weather data from the Open-Meteo API.
+    It handles API requests and retries.
     """
 
-    def __init__(self):
-        self.cache_session = requests_cache.CachedSession(
-            ".cache", expire_after=timedelta(seconds=CACHE_EXPIRATION_SECONDS)
-        )
-        self.openmeteo = openmeteo_requests.Client(session=self.cache_session)
-
     @retry(stop=stop_after_attempt(RETRY_COUNT), wait=wait_fixed(1))
-    def get_weather_data(
+    async def get_weather_data(
         self,
         latitude: float,
         longitude: float,
@@ -70,6 +62,9 @@ class OpenMeteoClient:
 
         Returns:
             A pandas DataFrame with the requested weather data.
+
+        Raises:
+            aiohttp.ClientError: If the API request fails.
         """
         start_date_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
         ninety_days_ago = datetime.now().date() - timedelta(days=90)
@@ -85,25 +80,27 @@ class OpenMeteoClient:
             "longitude": longitude,
             "start_date": start_date,
             "end_date": end_date,
-            "hourly": variables,
+            "hourly": ",".join(variables),
         }
-        responses = self.openmeteo.weather_api(api_url, params=params)
-        response = responses[0]
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(api_url, params=params) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    return self._process_response(data, variables)
+            except aiohttp.ClientError as e:
+                print(f"Error fetching weather data: {e}")
+                raise
 
-        hourly = response.Hourly()
+    def _process_response(
+        self, response_data: dict, variables: List[str]
+    ) -> pd.DataFrame:
+        """Processes the JSON response from the Open-Meteo API."""
+        hourly_data = response_data["hourly"]
 
-        # Generate the time range for the data
-        time_range = pd.date_range(
-            start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
-            end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
-            freq=pd.Timedelta(seconds=hourly.Interval()),
-            inclusive="left",
-        )
+        time_range = pd.to_datetime(hourly_data["time"])
 
-        # Create the data dictionary
-        data = {}
-        for i, var in enumerate(variables):
-            data[var] = hourly.Variables(i).ValuesAsNumpy()
+        data = {var: hourly_data[var] for var in variables}
 
         df = pd.DataFrame(data=data, index=time_range)
         df.index.name = WeatherDataColumns.DATE_TIME.value
@@ -150,7 +147,7 @@ class WeatherProvider(BaseModel):
                 )
         return self
 
-    def get_weather_data(self) -> pd.DataFrame:
+    async def get_weather_data(self) -> pd.DataFrame:
         """
         Retrieves weather data for the configured location and time range.
 
@@ -165,7 +162,7 @@ class WeatherProvider(BaseModel):
             WeatherDataColumns.TEMPERATURE,
         ]
         variables_str = [v.value for v in variables]
-        return client.get_weather_data(
+        return await client.get_weather_data(
             latitude=self.latitude,
             longitude=self.longitude,
             start_date=self.start_date,
