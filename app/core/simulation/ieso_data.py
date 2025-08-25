@@ -6,7 +6,7 @@ This provider fetches:
 - Historical day-ahead HOEP XML from IESO public reports
 - Pre-dispatch (forecast) HOEP XML (future delivery dates)
 
-Output is standardized to columns: timestamp (index), price_usd_mwh.
+Output is standardized to columns: timestamp (index), price_dollar_mwh.
 Note: HOEP is published in $/MWh CAD; no FX conversion is applied here.
 """
 
@@ -308,6 +308,10 @@ class IESOPriceProvider(BaseProvider, BasePriceProvider):
 
             # Standardize column names to unified format
             result_df = self._standardize_columns(result_df)
+
+            # Remove the redundant hoep_cad_mwh column after standardization
+            if "hoep_cad_mwh" in result_df.columns:
+                result_df = result_df.drop(columns=["hoep_cad_mwh"])
 
             logger.info(
                 "Fetched %s IESO HOEP points for range %s to %s",

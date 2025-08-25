@@ -42,7 +42,11 @@ test = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-asyncio_mode = "auto"
+addopts = "--tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
 
 [tool.ruff]
 line-length = 88
