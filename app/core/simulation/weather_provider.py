@@ -1,13 +1,15 @@
 """
-Weather data providers for PV simulation.
+Shared weather provider primitives and facade.
 
-This module provides:
+This module defines:
 - WeatherDataColumns: unified column names for weather data
 - BaseWeatherProvider: common provider interface with radiation decomposition
-- OpenMeteoWeatherProvider: fetches GHI + temperature from Open-Meteo API
-- CSVWeatherProvider: reads weather data from CSV files
-- create_weather_provider: factory function for provider creation
-- WeatherProvider: convenience facade
+- CSVWeatherProvider: generic CSV-backed provider
+- create_weather_provider: factory that routes to OpenMeteo/CSV
+- WeatherProvider facade
+
+Provider-specific implementations (OpenMeteo) remain in their modules and
+inherit from BaseProvider (cache/crawl) and BaseWeatherProvider (interface/helpers).
 
 By default, providers fetch only GHI and temperature, then calculate DNI and DHI
 using PVLib radiation decomposition models for API cost optimization.
@@ -15,32 +17,27 @@ using PVLib radiation decomposition models for API cost optimization.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import asyncio
+import concurrent.futures
+from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Optional, Protocol, runtime_checkable
 
 import pandas as pd
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.utils.api_clients import BaseAPIClient
-from app.core.utils.caching import BaseProvider
-from app.core.utils.data_processing import (
-    resample_timeseries_data,
-    standardize_column_names,
-)
-from app.core.utils.date_handling import TimeInterval, parse_date_string
+from app.core.utils.data_processing import standardize_column_names
+from app.core.utils.date_handling import TimeInterval
 from app.core.utils.location import GeospatialLocation
 from app.core.utils.logging import get_logger
+from app.core.utils.storage import DataStorage
 
-logger = get_logger("weather")
+logger = get_logger("weather_provider")
 
 
-# --- Constants and Enums ---
-
-OPEN_METEO_FORECAST_API_URL = "https://api.open-meteo.com/v1/forecast"
-OPEN_METEO_ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
-RETRY_COUNT = 3
-MAX_FORECAST_DAYS = 7
+# -----------------------------------------------------------------------------
+# Unified columns
+# -----------------------------------------------------------------------------
 
 
 class WeatherDataColumns(str, Enum):
@@ -50,7 +47,7 @@ class WeatherDataColumns(str, Enum):
     GHI = "ghi"
     DNI = "dni"
     DHI = "dhi"
-    TEMPERATURE = "temp_air"
+    TEMPERATURE = "temperature_celsius"
 
     # OpenMeteo API variable names
     OPENMETEO_GHI = "shortwave_radiation"
@@ -60,8 +57,32 @@ class WeatherDataColumns(str, Enum):
 
 
 # -----------------------------------------------------------------------------
-# Base weather provider interface and helpers
+# Base provider interface and helpers
 # -----------------------------------------------------------------------------
+
+
+@runtime_checkable
+class WeatherProviderProtocol(Protocol):
+    """Protocol for weather data providers with both async and sync interfaces."""
+
+    async def get_data(self, force_refresh: bool = False) -> pd.DataFrame: ...
+
+    def get_weather_data(
+        self, start_time: datetime, end_time: datetime
+    ) -> pd.DataFrame: ...
+
+    def validate_data_format(self, df: pd.DataFrame) -> bool: ...
+
+
+@runtime_checkable
+class SyncWeatherProviderProtocol(Protocol):
+    """Protocol for sync-only weather data providers."""
+
+    def get_weather_data(
+        self, start_time: datetime, end_time: datetime
+    ) -> pd.DataFrame: ...
+
+    def validate_data_format(self, df: pd.DataFrame) -> bool: ...
 
 
 class BaseWeatherProvider:
@@ -84,8 +105,8 @@ class BaseWeatherProvider:
     ) -> pd.DataFrame:
         """
         Synchronous bridge that updates the provider's date range and
-        invokes async `get_data()` using asyncio.run, with support for already-
-        running event loops.
+        invokes async `get_data()` using asyncio.run, with support for
+        already-running event loops.
         """
         # Update date range for providers that also extend BaseProvider
         try:
@@ -93,9 +114,6 @@ class BaseWeatherProvider:
             self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
         except Exception:
             pass
-
-        import asyncio
-        import concurrent.futures
 
         async def _run() -> pd.DataFrame:
             try:
@@ -133,9 +151,9 @@ class BaseWeatherProvider:
             return weather_df
 
         # Check what radiation components we have
-        has_ghi = WeatherDataColumns.GHI in weather_df.columns
-        has_dni = WeatherDataColumns.DNI in weather_df.columns
-        has_dhi = WeatherDataColumns.DHI in weather_df.columns
+        has_ghi = WeatherDataColumns.GHI.value in weather_df.columns
+        has_dni = WeatherDataColumns.DNI.value in weather_df.columns
+        has_dhi = WeatherDataColumns.DHI.value in weather_df.columns
 
         # If we have all components, no decomposition needed
         if has_ghi and has_dni and has_dhi:
@@ -147,7 +165,7 @@ class BaseWeatherProvider:
             logger.info("Calculating DNI and DHI from GHI using PVLib Erbs model")
             return self._decompose_ghi_to_dni_dhi(weather_df)
 
-        # For other partial cases, we could add more sophisticated handling
+        # For other partial cases, warn about unexpected combination
         logger.warning(
             f"Unexpected radiation component combination: "
             f"GHI={has_ghi}, DNI={has_dni}, DHI={has_dhi}"
@@ -174,15 +192,15 @@ class BaseWeatherProvider:
 
         # Use Erbs model to decompose GHI into DNI and DHI
         decomp_result = irradiance.erbs(
-            ghi=weather_df[WeatherDataColumns.GHI],
+            ghi=weather_df[WeatherDataColumns.GHI.value],
             zenith=solar_position["zenith"],
             datetime_or_doy=day_of_year,
         )
 
         # Add calculated DNI and DHI to the DataFrame
         enhanced_df = weather_df.copy()
-        enhanced_df[WeatherDataColumns.DNI] = decomp_result["dni"]
-        enhanced_df[WeatherDataColumns.DHI] = decomp_result["dhi"]
+        enhanced_df[WeatherDataColumns.DNI.value] = decomp_result["dni"]
+        enhanced_df[WeatherDataColumns.DHI.value] = decomp_result["dhi"]
 
         logger.debug(
             f"Decomposed GHI into DNI and DHI for {len(weather_df)} data points"
@@ -191,7 +209,10 @@ class BaseWeatherProvider:
 
     def validate_data_format(self, df: pd.DataFrame) -> bool:
         """Validate that the weather data has required columns and format."""
-        required_columns = [WeatherDataColumns.GHI, WeatherDataColumns.TEMPERATURE]
+        required_columns = [
+            WeatherDataColumns.GHI.value,
+            WeatherDataColumns.TEMPERATURE.value,
+        ]
 
         for col in required_columns:
             if col not in df.columns:
@@ -205,204 +226,9 @@ class BaseWeatherProvider:
         return True
 
 
-# --- Open-Meteo API Client ---
-
-
-class OpenMeteoClient(BaseAPIClient):
-    """
-    An asynchronous client for fetching weather data from the Open-Meteo API.
-    Optimized to fetch only GHI and temperature by default.
-    """
-
-    def __init__(self):
-        """Initialize the Open-Meteo client with appropriate retry settings."""
-        super().__init__(base_url="", retry_count=RETRY_COUNT, retry_wait=1)
-
-    async def get_weather_data(
-        self,
-        latitude: float,
-        longitude: float,
-        start_date: str,
-        end_date: str,
-        variables: Optional[List[str]] = None,
-        interval: Optional["TimeInterval"] = None,
-    ) -> pd.DataFrame:
-        """
-        Fetches weather data for a given location and time range.
-
-        By default, fetches only GHI and temperature for cost optimization.
-        DNI and DHI can be calculated later using PVLib decomposition.
-
-        Args:
-            latitude: The latitude of the location.
-            longitude: The longitude of the location.
-            start_date: The start date in YYYY-MM-DD format.
-            end_date: The end date in YYYY-MM-DD format.
-            variables: Weather variables to fetch. If None, defaults to
-                optimized set (GHI + temperature).
-            interval: Time interval for data.
-
-        Returns:
-            A pandas DataFrame with the requested weather data.
-        """
-        from app.core.utils.date_handling import TimeInterval
-
-        if interval is None:
-            interval = TimeInterval.HOURLY
-
-        # Default optimized variable set: only GHI + temperature
-        if variables is None:
-            variables = [
-                WeatherDataColumns.OPENMETEO_GHI.value,
-                WeatherDataColumns.OPENMETEO_TEMP.value,
-            ]
-
-        # Validate interval support
-        if interval != TimeInterval.HOURLY:
-            logger.warning(
-                f"Open-Meteo API doesn't natively support {interval.display_name} "
-                f"intervals. Fetching hourly data and will resample."
-            )
-
-        start_date_dt = parse_date_string(start_date)
-        end_date_dt = parse_date_string(end_date)
-        ninety_days_ago = datetime.now().date() - timedelta(days=90)
-
-        api_url = (
-            OPEN_METEO_ARCHIVE_API_URL
-            if start_date_dt < ninety_days_ago
-            else OPEN_METEO_FORECAST_API_URL
-        )
-
-        # Format dates for API
-        api_start_date = start_date_dt.strftime("%Y-%m-%d")
-        api_end_date = end_date_dt.strftime("%Y-%m-%d")
-
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "start_date": api_start_date,
-            "end_date": api_end_date,
-            "hourly": ",".join(variables),
-            "timezone": "auto",
-        }
-
-        data = await self.get_json(api_url, params)
-        df = self._process_response(data, variables)
-
-        # Resample if needed
-        if interval != TimeInterval.HOURLY:
-            df = resample_timeseries_data(df, interval)
-
-        return df
-
-    def _process_response(
-        self,
-        response_data: dict,
-        variables: List[str],
-    ) -> pd.DataFrame:
-        """Process JSON response from Open-Meteo API."""
-        data_section = response_data.get("hourly", {})
-        time_range = pd.to_datetime(data_section["time"])
-        data = {var: data_section[var] for var in variables}
-
-        df = pd.DataFrame(data=data, index=time_range)
-        df.index.name = WeatherDataColumns.DATE_TIME.value
-
-        # Map OpenMeteo variable names to standard weather data columns
-        column_mapping = {
-            WeatherDataColumns.OPENMETEO_GHI.value: WeatherDataColumns.GHI.value,
-            WeatherDataColumns.OPENMETEO_DNI.value: WeatherDataColumns.DNI.value,
-            WeatherDataColumns.OPENMETEO_DHI.value: WeatherDataColumns.DHI.value,
-            WeatherDataColumns.OPENMETEO_TEMP.value: (
-                WeatherDataColumns.TEMPERATURE.value
-            ),
-        }
-        return standardize_column_names(df, column_mapping)
-
-
-# --- OpenMeteo Weather Provider ---
-
-
-class OpenMeteoWeatherProvider(BaseProvider, BaseWeatherProvider):
-    """
-    OpenMeteo-based weather provider with caching and radiation decomposition.
-
-    By default, fetches only GHI and temperature to optimize API costs,
-    then calculates DNI and DHI using PVLib decomposition models.
-    """
-
-    data_type: str = Field(default="weather", description="Type of data.")
-    fetch_all_radiation: bool = Field(
-        default=False, description="If True, fetch all radiation components from API"
-    )
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    def __init__(self, location: GeospatialLocation, **kwargs):
-        """Initialize with a GeospatialLocation."""
-        BaseProvider.__init__(self, location=location, **kwargs)
-        BaseWeatherProvider.__init__(self, location=location, **kwargs)
-
-    @model_validator(mode="after")
-    def validate_date_range(self) -> "OpenMeteoWeatherProvider":
-        """Validate forecast requests don't exceed maximum allowed days."""
-        start_date = parse_date_string(self.start_date)
-        end_date = parse_date_string(self.end_date)
-        today = datetime.now().date()
-
-        if start_date >= today:
-            if (end_date - start_date).days >= MAX_FORECAST_DAYS:
-                raise ValueError(
-                    f"Forecast range cannot exceed {MAX_FORECAST_DAYS} days."
-                )
-        return self
-
-    async def _fetch_range(self, start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        Fetch weather data for a specific date range from Open-Meteo API.
-        """
-        client = OpenMeteoClient()
-
-        # Choose variables based on optimization setting
-        if self.fetch_all_radiation:
-            # Fetch all radiation components (original behavior)
-            variables = [
-                WeatherDataColumns.OPENMETEO_GHI.value,
-                WeatherDataColumns.OPENMETEO_DNI.value,
-                WeatherDataColumns.OPENMETEO_DHI.value,
-                WeatherDataColumns.OPENMETEO_TEMP.value,
-            ]
-            logger.info("Fetching all radiation components from OpenMeteo API")
-        else:
-            # Fetch only GHI + temperature (optimized)
-            variables = [
-                WeatherDataColumns.OPENMETEO_GHI.value,
-                WeatherDataColumns.OPENMETEO_TEMP.value,
-            ]
-            logger.info("Fetching optimized variables (GHI + temp) from OpenMeteo API")
-
-        # Ensure we have a GeospatialLocation
-        if not isinstance(self.location, GeospatialLocation):
-            raise ValueError("OpenMeteoWeatherProvider requires a GeospatialLocation")
-
-        # Fetch raw data from API
-        raw_data = await client.get_weather_data(
-            latitude=self.location.latitude,
-            longitude=self.location.longitude,
-            start_date=start_date,
-            end_date=end_date,
-            variables=variables,
-            interval=self.interval,
-        )
-
-        # Apply radiation decomposition if needed
-        enhanced_data = self.calculate_radiation_components(raw_data)
-
-        return enhanced_data
-
-
-# --- CSV Weather Provider ---
+# -----------------------------------------------------------------------------
+# CSV Weather Provider
+# -----------------------------------------------------------------------------
 
 
 class CSVWeatherProvider(BaseWeatherProvider):
@@ -450,6 +276,7 @@ class CSVWeatherProvider(BaseWeatherProvider):
                 "dhi": WeatherDataColumns.DHI.value,
                 "temp_air": WeatherDataColumns.TEMPERATURE.value,
                 "temperature": WeatherDataColumns.TEMPERATURE.value,
+                "temperature_celsius": WeatherDataColumns.TEMPERATURE.value,
                 "shortwave_radiation": WeatherDataColumns.GHI.value,
                 "direct_normal_irradiance": WeatherDataColumns.DNI.value,
                 "diffuse_radiation": WeatherDataColumns.DHI.value,
@@ -469,7 +296,9 @@ class CSVWeatherProvider(BaseWeatherProvider):
             return pd.DataFrame()
 
 
-# --- Factory Functions ---
+# -----------------------------------------------------------------------------
+# Factory Functions
+# -----------------------------------------------------------------------------
 
 
 def create_weather_provider(
@@ -490,6 +319,8 @@ def create_weather_provider(
         ValueError: If provider_type is not supported
     """
     if provider_type.lower() == "openmeteo":
+        from app.core.simulation.open_meteo_data import OpenMeteoWeatherProvider
+
         return OpenMeteoWeatherProvider(location=location, **kwargs)
     elif provider_type.lower() == "csv":
         if "file_path" not in kwargs:
@@ -499,15 +330,61 @@ def create_weather_provider(
         raise ValueError(f"Unsupported weather provider type: {provider_type}")
 
 
-# --- Convenience Facade ---
+# -----------------------------------------------------------------------------
+# Convenience Facade and Configuration
+# -----------------------------------------------------------------------------
 
 
-class WeatherProvider(OpenMeteoWeatherProvider):
+class WeatherProviderConfig(BaseModel):
+    """Configuration builder for weather providers."""
+
+    location: GeospatialLocation = Field(description="Geographic location")
+    provider_type: str = Field(default="openmeteo", description="Provider type")
+    start_date: str = Field(description="Start date for data")
+    end_date: str = Field(description="End date for data")
+    organization: str = Field(description="Organization name for data storage")
+    asset: str = Field(description="Asset name for data storage")
+    interval: TimeInterval = Field(
+        default=TimeInterval.HOURLY, description="Data interval"
+    )
+    storage: Optional[DataStorage] = Field(
+        default=None, description="Data storage config"
+    )
+    fetch_all_radiation: bool = Field(
+        default=False, description="If True, fetch all radiation components"
+    )
+    file_path: Optional[str] = Field(
+        default=None, description="CSV file path for CSV provider"
+    )
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def create_provider(self) -> BaseWeatherProvider:
+        """Create weather provider from configuration."""
+        kwargs = {
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "organization": self.organization,
+            "asset": self.asset,
+            "interval": self.interval,
+            "storage": self.storage,
+        }
+
+        if self.provider_type == "openmeteo":
+            kwargs["fetch_all_radiation"] = self.fetch_all_radiation
+        elif self.provider_type == "csv":
+            if self.file_path is None:
+                raise ValueError("CSV provider requires file_path")
+            kwargs["file_path"] = self.file_path
+
+        return create_weather_provider(self.location, self.provider_type, **kwargs)
+
+
+def WeatherProvider(location: GeospatialLocation, **kwargs) -> BaseWeatherProvider:
     """
     Convenience facade for weather data access.
 
     Defaults to OpenMeteo provider with optimized fetching (GHI + temperature only).
     Use create_weather_provider() for more control over provider selection.
     """
-
-    pass
+    return create_weather_provider(location, "openmeteo", **kwargs)

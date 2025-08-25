@@ -1,7 +1,25 @@
 """
 Solar Power Revenue Calculator Example
 
-This demonstrates a solar producer selling power at real wholesale
+This demo    # Centralized date configuration for consistent time ranges
+    # Use a known historical date for demonstration (data should be available)
+    from datetime import datetime
+
+    # Define analysis period as datetime objects (single source of truth)
+    # Use exact 24-hour period to avoid rounding issues
+    if market_region == PriceMarketRegion.IESO:
+        # IESO has shorter data retention, use more recent date
+        # Use August 2024 for IESO (more likely to be available)
+        analysis_start = datetime(2024, 8, 15, 0, 0, 0)  # Start at midnight
+        analysis_end = datetime(2024, 8, 16, 0, 0, 0)    # End at midnight next day
+    else:
+        # CAISO has longer data retention, use July 2024
+        analysis_start = datetime(2024, 7, 15, 0, 0, 0)  # Start at midnight
+        analysis_end = datetime(2024, 7, 16, 0, 0, 0)    # End at midnight next day
+
+    # Convert to string format for provider initialization
+    start_date = analysis_start.strftime("%Y-%m-%d %H:%M:%S")
+    end_date = analysis_end.strftime("%Y-%m-%d %H:%M:%S")lar producer selling power at real wholesale
 electricity prices, with automatic provider selection by market region
 (CAISO for California, IESO for Ontario). It includes the Duck Curve
 effect where solar can drive prices negative.
@@ -53,7 +71,7 @@ async def create_solar_system():
 
     # Centralized date configuration for consistent time ranges
     # Use a known historical date for demonstration (data should be available)
-    # Using July 2025 - well into the historical archive
+    # Using July 2024 - well into the historical archive
     from datetime import datetime
 
     # Define analysis period as datetime objects (single source of truth)

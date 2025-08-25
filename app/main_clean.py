@@ -53,13 +53,13 @@ async def create_solar_system():
 
     # Centralized date configuration for consistent time ranges
     # Use a known historical date for demonstration (data should be available)
-    # Using July 2025 - well into the historical archive
+    # Using July 2024 - well into the historical archive
     from datetime import datetime
 
     # Define analysis period as datetime objects (single source of truth)
     # Use exact 24-hour period to avoid rounding issues
-    analysis_start = datetime(2025, 7, 15, 0, 0, 0)  # Start at midnight
-    analysis_end = datetime(2025, 7, 16, 0, 0, 0)  # End at midnight next day
+    analysis_start = datetime(2024, 7, 15, 0, 0, 0)  # Start at midnight
+    analysis_end = datetime(2024, 7, 16, 0, 0, 0)  # End at midnight next day
 
     # Convert to string format for provider initialization
     start_date = analysis_start.strftime("%Y-%m-%d %H:%M:%S")

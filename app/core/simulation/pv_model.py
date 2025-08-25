@@ -9,10 +9,10 @@ from typing import Dict
 
 import pandas as pd
 from pvlib import modelchain
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.simulation.pvlib_models import PVLibModel, PVLibResultsColumns
-from app.core.simulation.weather import WeatherProvider
+from app.core.simulation.weather_provider import WeatherProviderProtocol
 from app.core.utils.logging import get_logger
 
 logger = get_logger("pv_model")
@@ -27,8 +27,10 @@ class PVModel(BaseModel):
     AC capacity and DC/AC ratio, or arrays and inverters specifications.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     pv_config: PVLibModel = Field(description="PVLib model configuration")
-    weather_provider: WeatherProvider = Field(
+    weather_provider: WeatherProviderProtocol = Field(
         description="Weather data provider configuration"
     )
 
