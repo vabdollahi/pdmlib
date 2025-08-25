@@ -102,14 +102,14 @@ def parse_datetime_input(
         A datetime object with timezone set to UTC.
 
     Examples:
-        >>> parse_datetime_input("2024-01-01")
-        datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+        >>> parse_datetime_input("2025-01-01")
+        datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
 
-        >>> parse_datetime_input("2024-01-01 14:30:00")
-        datetime(2024, 1, 1, 14, 30, tzinfo=UTC)
+        >>> parse_datetime_input("2025-01-01 14:30:00")
+        datetime(2025, 1, 1, 14, 30, tzinfo=UTC)
 
-        >>> parse_datetime_input("2024-01-01 14:30")
-        datetime(2024, 1, 1, 14, 30, tzinfo=UTC)
+        >>> parse_datetime_input("2025-01-01 14:30")
+        datetime(2025, 1, 1, 14, 30, tzinfo=UTC)
     """
     if isinstance(dt_input, datetime):
         # Already a datetime, ensure it's UTC
@@ -183,21 +183,21 @@ def normalize_date_range(
         Tuple of (start_datetime, end_datetime) in UTC
 
     Examples:
-        >>> start, end = normalize_date_range("2024-01-01", "2024-01-02")
-        >>> print(start)  # 2024-01-01 00:00:00+00:00
-        >>> print(end)    # 2024-01-02 23:59:59+00:00
+        >>> start, end = normalize_date_range("2025-01-01", "2025-01-02")
+        >>> print(start)  # 2025-01-01 00:00:00+00:00
+        >>> print(end)    # 2025-01-02 23:59:59+00:00
 
-        >>> start, end = normalize_date_range("2024-01-01 14:30", "2024-01-01 16:45")
-        >>> print(start)  # 2024-01-01 14:30:00+00:00
-        >>> print(end)    # 2024-01-01 16:45:00+00:00
+        >>> start, end = normalize_date_range("2025-01-01 14:30", "2025-01-01 16:45")
+        >>> print(start)  # 2025-01-01 14:30:00+00:00
+        >>> print(end)    # 2025-01-01 16:45:00+00:00
 
         >>> # With interval rounding
         >>> start, end = normalize_date_range(
-        ...     "2024-01-01 10:01:23", "2024-01-01 14:47:15",
+        ...     "2025-01-01 10:01:23", "2025-01-01 14:47:15",
         ...     TimeInterval.FIVE_MINUTES
         ... )
-        >>> print(start)  # 2024-01-01 10:00:00+00:00
-        >>> print(end)    # 2024-01-01 14:50:00+00:00
+        >>> print(start)  # 2025-01-01 10:00:00+00:00
+        >>> print(end)    # 2025-01-01 14:50:00+00:00
     """
     # For start times, default to beginning of day
     start_dt = parse_datetime_input(start_input, default_time=time(0, 0, 0))
@@ -238,11 +238,11 @@ def parse_date_string(date_str: str) -> date:
         date object
 
     Examples:
-        >>> parse_date_string("2024-01-01")
-        datetime.date(2024, 1, 1)
+        >>> parse_date_string("2025-01-01")
+        datetime.date(2025, 1, 1)
 
-        >>> parse_date_string("2024-01-01 10:30:00")
-        datetime.date(2024, 1, 1)
+        >>> parse_date_string("2025-01-01 10:30:00")
+        datetime.date(2025, 1, 1)
     """
     try:
         return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S").date()
@@ -311,8 +311,8 @@ def split_datetime_range_by_days(
 
     Examples:
         >>> chunks = split_datetime_range_by_days(
-        ...     datetime(2024, 1, 1, 14, 0),
-        ...     datetime(2024, 1, 3, 10, 0)
+        ...     datetime(2025, 1, 1, 14, 0),
+        ...     datetime(2025, 1, 3, 10, 0)
         ... )
         >>> len(chunks)  # 3 days
         3
@@ -363,8 +363,8 @@ def create_date_range_with_interval(
         DatetimeIndex with timestamps at the specified interval
 
     Examples:
-        >>> start = datetime(2024, 1, 1, 0, 0)
-        >>> end = datetime(2024, 1, 1, 2, 0)
+        >>> start = datetime(2025, 1, 1, 0, 0)
+        >>> end = datetime(2025, 1, 1, 2, 0)
         >>> range_5min = create_date_range_with_interval(
         ...     start, end, TimeInterval.FIVE_MINUTES
         ... )
@@ -410,9 +410,9 @@ def find_missing_intervals(
         List of tuples containing start and end datetime of missing periods
 
     Examples:
-        >>> start = datetime(2024, 1, 1, 0, 0)
-        >>> end = datetime(2024, 1, 1, 1, 0)
-        >>> existing = pd.DatetimeIndex([datetime(2024, 1, 1, 0, 30)])
+        >>> start = datetime(2025, 1, 1, 0, 0)
+        >>> end = datetime(2025, 1, 1, 1, 0)
+        >>> existing = pd.DatetimeIndex([datetime(2025, 1, 1, 0, 30)])
         >>> gaps = find_missing_intervals(
         ...     start, end, existing, TimeInterval.FIFTEEN_MINUTES
         ... )
@@ -469,8 +469,8 @@ def estimate_data_points(
         Estimated number of data points
 
     Examples:
-        >>> start = datetime(2024, 1, 1, 0, 0)
-        >>> end = datetime(2024, 1, 2, 0, 0)  # 24 hours
+        >>> start = datetime(2025, 1, 1, 0, 0)
+        >>> end = datetime(2025, 1, 2, 0, 0)  # 24 hours
         >>> estimate_data_points(start, end, TimeInterval.HOURLY)
         25  # 24 hours + 1 for inclusive end
 
@@ -536,15 +536,15 @@ def round_datetime_to_interval(
         Rounded datetime
 
     Examples:
-        >>> dt = datetime(2024, 1, 1, 10, 1, 23)
+        >>> dt = datetime(2025, 1, 1, 10, 1, 23)
         >>> round_datetime_to_interval(dt, TimeInterval.FIVE_MINUTES, "down")
-        datetime(2024, 1, 1, 10, 0, 0)
+        datetime(2025, 1, 1, 10, 0, 0)
 
         >>> round_datetime_to_interval(dt, TimeInterval.HOURLY, "down")
-        datetime(2024, 1, 1, 10, 0, 0)
+        datetime(2025, 1, 1, 10, 0, 0)
 
         >>> round_datetime_to_interval(dt, TimeInterval.DAILY, "down")
-        datetime(2024, 1, 1, 0, 0, 0)
+        datetime(2025, 1, 1, 0, 0, 0)
     """
     if direction not in ["down", "up", "nearest"]:
         raise ValueError("direction must be 'down', 'up', or 'nearest'")
@@ -668,13 +668,13 @@ def round_datetime_range_to_interval(
         Tuple of (rounded_start, rounded_end)
 
     Examples:
-        >>> start = datetime(2024, 1, 1, 10, 1, 23)
-        >>> end = datetime(2024, 1, 1, 14, 47, 15)
+        >>> start = datetime(2025, 1, 1, 10, 1, 23)
+        >>> end = datetime(2025, 1, 1, 14, 47, 15)
         >>> round_datetime_range_to_interval(start, end, TimeInterval.FIVE_MINUTES)
-        (datetime(2024, 1, 1, 10, 0, 0), datetime(2024, 1, 1, 14, 50, 0))
+        (datetime(2025, 1, 1, 10, 0, 0), datetime(2025, 1, 1, 14, 50, 0))
 
         >>> round_datetime_range_to_interval(start, end, TimeInterval.HOURLY)
-        (datetime(2024, 1, 1, 10, 0, 0), datetime(2024, 1, 1, 15, 0, 0))
+        (datetime(2025, 1, 1, 10, 0, 0), datetime(2025, 1, 1, 15, 0, 0))
     """
     # Round start down to ensure we don't miss any data
     rounded_start = round_datetime_to_interval(start_dt, interval, "down")
@@ -714,12 +714,12 @@ def get_optimal_interval_for_range(
         Recommended TimeInterval
 
     Examples:
-        >>> start = datetime(2024, 1, 1)
-        >>> end = datetime(2024, 1, 2)  # 1 day
+        >>> start = datetime(2025, 1, 1)
+        >>> end = datetime(2025, 1, 2)  # 1 day
         >>> get_optimal_interval_for_range(start, end)
         TimeInterval.FIVE_MINUTES  # Fine granularity for short range
 
-        >>> end = datetime(2024, 12, 31)  # 1 year
+        >>> end = datetime(2025, 12, 31)  # 1 year
         >>> get_optimal_interval_for_range(start, end)
         TimeInterval.DAILY  # Coarse granularity for long range
     """

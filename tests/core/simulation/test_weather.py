@@ -32,7 +32,7 @@ def mock_api_response():
         "latitude": 52.52,
         "longitude": 13.41,
         "hourly": {
-            "time": ["2024-01-01T00:00", "2024-01-01T01:00"],
+            "time": ["2025-01-01T00:00", "2025-01-01T01:00"],
             "shortwave_radiation": [0.0, 0.0],
             "direct_normal_irradiance": [0.0, 0.0],
             "diffuse_radiation": [0.0, 0.0],
@@ -46,8 +46,8 @@ def test_weather_provider_valid_historical_range(mock_storage):
     """Tests that a valid historical date range passes validation."""
     provider = WeatherProvider(
         location=GeospatialLocation(latitude=52.52, longitude=13.41),
-        start_date="2024-01-01",
-        end_date="2024-01-10",
+        start_date="2025-01-01",
+        end_date="2025-01-10",
         organization="test-org",
         asset="test-asset",
         storage=mock_storage,
@@ -101,8 +101,8 @@ async def test_client_uses_archive_url_for_historical_data(mock_get, mock_api_re
     await client.get_weather_data(
         latitude=52.52,
         longitude=13.41,
-        start_date="2024-01-01",
-        end_date="2024-01-02",
+        start_date="2025-01-01",
+        end_date="2025-01-02",
         variables=[],
     )
 

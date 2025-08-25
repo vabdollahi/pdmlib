@@ -757,6 +757,7 @@ test = [
 dev = [
     { name = "build" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "ruff" },
     { name = "taskipy" },
 ]
@@ -784,6 +785,7 @@ provides-extras = ["test"]
 dev = [
     { name = "build", specifier = ">=1.2.1" },
     { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=0.23.8" },
     { name = "ruff", specifier = ">=0.5.5" },
     { name = "taskipy", specifier = ">=1.14.1" },
 ]

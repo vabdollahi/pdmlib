@@ -13,7 +13,7 @@ from app.core.utils.storage import DataStorage
 def sample_dataframe():
     """Creates a sample DataFrame for testing."""
     dates = pd.to_datetime(
-        pd.date_range(start="2024-01-15", end="2024-03-10", freq="D")
+        pd.date_range(start="2025-01-15", end="2025-03-10", freq="D")
     )
     data = {
         "ghi": range(len(dates)),
@@ -46,9 +46,9 @@ def test_write_data_creates_partitions_and_files(storage, sample_dataframe):
 
     # Check that files for each month have been created
     expected_files = [
-        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2024_01.parquet",
-        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2024_02.parquet",
-        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2024_03.parquet",
+        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2025_01.parquet",
+        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2025_02.parquet",
+        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2025_03.parquet",
     ]
     for f in expected_files:
         assert storage.fs.exists(f)
@@ -80,14 +80,14 @@ def test_read_data_for_range_combines_and_filters(storage, sample_dataframe):
         asset="TestAsset",
         data_type="weather",
         location=location,
-        start_date="2024-01-20",
-        end_date="2024-02-10",
+        start_date="2025-01-20",
+        end_date="2025-02-10",
     )
 
     assert isinstance(df_read.index, pd.DatetimeIndex)
     assert df_read.index.name == "date_time"
-    assert df_read.index.min() == pd.to_datetime("2024-01-20")
-    assert df_read.index.max() == pd.to_datetime("2024-02-10")
+    assert df_read.index.min() == pd.to_datetime("2025-01-20")
+    assert df_read.index.max() == pd.to_datetime("2025-02-10")
     assert len(df_read) == 22  # 12 days in Jan + 10 in Feb
 
 
@@ -101,8 +101,8 @@ def test_read_from_non_existent_path_returns_empty(storage):
         asset="NoAsset",
         data_type="weather",
         location=location,
-        start_date="2024-01-01",
-        end_date="2024-01-31",
+        start_date="2025-01-01",
+        end_date="2025-01-31",
     )
     assert df_read.empty
 
@@ -114,7 +114,7 @@ def test_write_data_updates_existing_file(storage):
     """
     # Create initial data for January
     location = GeospatialLocation(latitude=12.34, longitude=56.78)
-    jan_dates_1 = pd.to_datetime(pd.date_range("2024-01-01", "2024-01-10", freq="D"))
+    jan_dates_1 = pd.to_datetime(pd.date_range("2025-01-01", "2025-01-10", freq="D"))
     jan_df_1 = pd.DataFrame({"value": range(10)}, index=jan_dates_1)
     jan_df_1.index.name = "date_time"
 
@@ -127,7 +127,7 @@ def test_write_data_updates_existing_file(storage):
     )
 
     # Create new data for January, partially overlapping
-    jan_dates_2 = pd.to_datetime(pd.date_range("2024-01-05", "2024-01-15", freq="D"))
+    jan_dates_2 = pd.to_datetime(pd.date_range("2025-01-05", "2025-01-15", freq="D"))
     # Use different values to check the update
     jan_df_2 = pd.DataFrame({"value": range(100, 111)}, index=jan_dates_2)
     jan_df_2.index.name = "date_time"
@@ -146,18 +146,18 @@ def test_write_data_updates_existing_file(storage):
         asset="TestAsset",
         data_type="test_data",
         location=location,
-        start_date="2024-01-01",
-        end_date="2024-01-31",
+        start_date="2025-01-01",
+        end_date="2025-01-31",
     )
 
     # Check that the total number of days is correct (15 days)
     assert len(full_jan_data) == 15
     # Check that the first part of the old data is still there
-    assert full_jan_data.loc["2024-01-01"]["value"] == 0
+    assert full_jan_data.loc["2025-01-01"]["value"] == 0
     # Check that the overlapping data has been updated with the new values
-    assert full_jan_data.loc["2024-01-10"]["value"] == 105
+    assert full_jan_data.loc["2025-01-10"]["value"] == 105
     # Check that the newest data is present
-    assert full_jan_data.loc["2024-01-15"]["value"] == 110
+    assert full_jan_data.loc["2025-01-15"]["value"] == 110
 
 
 def test_storage_with_regional_location(storage):
@@ -165,7 +165,7 @@ def test_storage_with_regional_location(storage):
     Tests that the storage works correctly with a different location type.
     """
     location = RegionalLocation(country="Germany", region="Bavaria")
-    dates = pd.to_datetime(pd.date_range("2024-01-01", "2024-01-05", freq="D"))
+    dates = pd.to_datetime(pd.date_range("2025-01-01", "2025-01-05", freq="D"))
     df = pd.DataFrame({"price": [100, 110, 105, 120, 115]}, index=dates)
     df.index.name = "date_time"
 
@@ -177,7 +177,7 @@ def test_storage_with_regional_location(storage):
         location=location,
     )
 
-    expected_file = "memory://test-data/EnergyCorp/GridDE/price/country_germany_region_bavaria/2024_01.parquet"
+    expected_file = "memory://test-data/EnergyCorp/GridDE/price/country_germany_region_bavaria/2025_01.parquet"
     assert storage.fs.exists(expected_file)
 
     df_read = storage.read_data_for_range(
@@ -185,8 +185,8 @@ def test_storage_with_regional_location(storage):
         asset="GridDE",
         data_type="price",
         location=location,
-        start_date="2024-01-01",
-        end_date="2024-01-31",
+        start_date="2025-01-01",
+        end_date="2025-01-31",
     )
     assert len(df_read) == 5
     assert df_read.iloc[0]["price"] == 100

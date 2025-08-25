@@ -21,6 +21,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
+    "pytest-asyncio>=0.23.8",
     "taskipy>=1.14.1",
     "build>=1.2.1",
     "ruff>=0.5.5",
@@ -30,7 +31,7 @@ dev = [
 start = "python -m app.main"
 test = "pytest app tests"
 lint = "ruff check app tests"
-lint-format = "ruff format app tests && ruff check app tests --fix"
+lint-fix = "ruff format app tests && ruff check app tests --fix"
 
 [project.optional-dependencies]
 test = [
@@ -41,7 +42,11 @@ test = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-asyncio_mode = "auto"
+addopts = "--tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
 
 [tool.ruff]
 line-length = 88
