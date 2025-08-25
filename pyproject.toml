@@ -6,20 +6,50 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pvlib>=0.13.0",
+    "pydantic>=2.11.7",
+    "tenacity>=9.1.2",
+    "openmeteo-requests>=1.1.0",
+    "requests-cache>=1.2.1",
+    "aiohttp>=3.9.5",
+    "pyarrow>=16.1.0",
+    "fsspec>=2024.6.1",
+    "gcsfs>=2024.6.0",
+    "requests>=2.28.0,<3.0.0",
+    "urllib3>=1.26.0,<1.27.0",
 ]
 
 [dependency-groups]
 dev = [
-    "black>=25.1.0",
-    "flake8>=7.3.0",
-    "isort>=6.0.1",
     "pytest>=8.4.1",
     "taskipy>=1.14.1",
     "build>=1.2.1",
+    "ruff>=0.5.5",
 ]
 
 [tool.taskipy.tasks]
-start = "bash scripts/start.sh"
-test = "bash scripts/test.sh"
-lint = "bash scripts/lint.sh"
-lint-format = "bash scripts/lint-format.sh"
+start = "python -m app.main"
+test = "pytest app tests"
+lint = "ruff check app tests"
+lint-format = "ruff format app tests && ruff check app tests --fix"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3.2",
+    "pytest-mock>=3.14.0",
+    "pytest-asyncio>=0.23.8",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 88
+
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"

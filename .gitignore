@@ -5,9 +5,13 @@ build/
 dist/
 wheels/
 *.egg-info
+.cache.sqlite
 
 # Virtual environments
 .venv
 
 # Ruff
 .ruff_cache
+
+# data folder
+data

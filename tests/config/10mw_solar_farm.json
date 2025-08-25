@@ -1,0 +1,114 @@
+{
+  "location": {
+    "name": "LA_10MW_Solar_Farm",
+    "latitude": 34.0522,
+    "longitude": -118.2437,
+    "tz": "America/Los_Angeles",
+    "altitude": 71
+  },
+  "pv_systems": [
+    {
+      "inverters": {
+        "count": 5,
+        "database": "CECInverter",
+        "record": "Sungrow_Power_Supply_Co___Ltd___SG125HV__600V_"
+      },
+      "pv_arrays": [
+        {
+          "pv_modules": {
+            "count": 20,
+            "name": "Canadian Solar 220W Block 1",
+            "database": "CECMod",
+            "record": "Canadian_Solar_Inc__CS5P_220M"
+          },
+          "array_setup": {
+            "name": "Block 1 - Fixed Mount (2.75 MW)",
+            "mount": {
+              "type": "fixed_mount",
+              "tilt_degrees": 28.0,
+              "azimuth_degrees": 180.0
+            },
+            "number_of_strings": 625,
+            "temperature_model": {
+              "database": "sapm",
+              "record": "close_mount_glass_glass"
+            }
+          }
+        },
+        {
+          "pv_modules": {
+            "count": 20,
+            "name": "Canadian Solar 220W Block 2",
+            "database": "CECMod",
+            "record": "Canadian_Solar_Inc__CS5P_220M"
+          },
+          "array_setup": {
+            "name": "Block 2 - Fixed Mount (2.75 MW)",
+            "mount": {
+              "type": "fixed_mount",
+              "tilt_degrees": 28.0,
+              "azimuth_degrees": 180.0
+            },
+            "number_of_strings": 625,
+            "temperature_model": {
+              "database": "sapm",
+              "record": "close_mount_glass_glass"
+            }
+          }
+        },
+        {
+          "pv_modules": {
+            "count": 20,
+            "name": "Canadian Solar 220W Block 3",
+            "database": "CECMod",
+            "record": "Canadian_Solar_Inc__CS5P_220M"
+          },
+          "array_setup": {
+            "name": "Block 3 - Single Axis Tracking (2.75 MW)",
+            "mount": {
+              "type": "single_axis",
+              "axis_tilt_degrees": 0.0,
+              "axis_azimuth_degrees": 180.0,
+              "max_angle_degrees": 55.0,
+              "backtrack": true,
+              "gcr": 0.35
+            },
+            "number_of_strings": 625,
+            "temperature_model": {
+              "database": "sapm",
+              "record": "close_mount_glass_glass"
+            }
+          }
+        },
+        {
+          "pv_modules": {
+            "count": 20,
+            "name": "Canadian Solar 220W Block 4",
+            "database": "CECMod",
+            "record": "Canadian_Solar_Inc__CS5P_220M"
+          },
+          "array_setup": {
+            "name": "Block 4 - Single Axis Tracking (2.0 MW)",
+            "mount": {
+              "type": "single_axis",
+              "axis_tilt_degrees": 0.0,
+              "axis_azimuth_degrees": 180.0,
+              "max_angle_degrees": 55.0,
+              "backtrack": true,
+              "gcr": 0.35
+            },
+            "number_of_strings": 455,
+            "temperature_model": {
+              "database": "sapm",
+              "record": "close_mount_glass_glass"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "physical_simulation": {
+    "aoi_model": "physical",
+    "spectral_model": "no_loss"
+  }
+}
