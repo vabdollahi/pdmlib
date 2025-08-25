@@ -131,6 +131,48 @@ class BaseAPIClient:
 
         return await _make_request()
 
+    async def get_bytes(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> bytes:
+        """
+        Make a GET request and return raw bytes.
+
+        Args:
+            endpoint: API endpoint (without base URL) or full URL
+            params: Query parameters
+            headers: HTTP headers
+
+        Returns:
+            Raw response bytes
+
+        Raises:
+            aiohttp.ClientError: If the request fails
+        """
+
+        @self._create_retry_decorator()
+        async def _make_request():
+            # Check if endpoint is a full URL or just an endpoint
+            if endpoint.startswith(("http://", "https://")):
+                url = endpoint
+            else:
+                url = f"{self.base_url}/{endpoint.lstrip('/')}"
+
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.get(
+                        url, params=params, headers=headers
+                    ) as response:
+                        response.raise_for_status()
+                        return await response.read()
+                except aiohttp.ClientError as e:
+                    logger.error(f"Error fetching data from {url}: {e}")
+                    raise
+
+        return await _make_request()
+
 
 class CAISORateLimitedClient(BaseAPIClient):
     """
@@ -308,6 +350,60 @@ class CAISORateLimitedClient(BaseAPIClient):
                         await self._handle_rate_limit_error(response)
                         response.raise_for_status()
                         return await response.text()
+
+                except aiohttp.ClientResponseError as e:
+                    if e.status == 429:
+                        logger.warning(f"CAISO rate limit error (429): {e}")
+                    else:
+                        logger.error(
+                            f"HTTP error {e.status} fetching data from {url}: {e}"
+                        )
+                    raise
+                except aiohttp.ClientError as e:
+                    logger.error(f"Error fetching data from {url}: {e}")
+                    raise
+
+        return await _make_request()
+
+    async def get_bytes(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> bytes:
+        """
+        Make a rate-limited GET request and return raw bytes.
+
+        Args:
+            endpoint: API endpoint (without base URL) or full URL
+            params: Query parameters
+            headers: HTTP headers
+
+        Returns:
+            Raw response bytes
+
+        Raises:
+            aiohttp.ClientError: If the request fails after all retries
+        """
+
+        @self._create_retry_decorator()
+        async def _make_request():
+            await self._enforce_rate_limit()
+
+            # Check if endpoint is a full URL or just an endpoint
+            if endpoint.startswith(("http://", "https://")):
+                url = endpoint
+            else:
+                url = f"{self.base_url}/{endpoint.lstrip('/')}"
+
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.get(
+                        url, params=params, headers=headers
+                    ) as response:
+                        await self._handle_rate_limit_error(response)
+                        response.raise_for_status()
+                        return await response.read()
 
                 except aiohttp.ClientResponseError as e:
                     if e.status == 429:

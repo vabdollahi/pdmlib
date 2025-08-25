@@ -16,6 +16,7 @@ from pydantic import Field, model_validator
 
 from app.core.utils.api_clients import CAISORateLimitedClient
 from app.core.utils.caching import BaseProvider
+from app.core.utils.http_cache import SimpleHTTPCache
 from app.core.utils.location import GeospatialLocation
 from app.core.utils.logging import get_logger
 
@@ -42,12 +43,12 @@ class BasePriceProvider(ABC):
         """
         Get electricity price data for the specified time range.
 
-        Args:
-            start_time: Start datetime for price data
-            end_time: End datetime for price data
+            Args:
+                start_time: Start datetime for price data
+                end_time: End datetime for price data
 
-        Returns:
-            DataFrame with columns: timestamp, price_usd_mwh
+            Returns:
+                DataFrame with columns: timestamp, price_usd_mwh
         """
         pass
 
@@ -245,8 +246,35 @@ class CAISOClient(CAISORateLimitedClient):
     for the California electricity market.
     """
 
-    def __init__(self):
-        super().__init__(base_url="http://oasis.caiso.com/oasisapi/SingleZip")
+    def __init__(self, cache_ttl_seconds: int = 600, cache_namespace: str = "caiso"):
+        # Base URL for CAISO OASIS API (no trailing slash to avoid double slashes)
+        super().__init__(base_url="https://oasis.caiso.com/oasisapi")
+        # Allow overriding cache behavior via environment variables
+        # CAISO_HTTP_CACHE_TTL (seconds), CAISO_HTTP_CACHE_DISABLED ("1" to disable)
+        import os
+
+        env_ttl = os.getenv("CAISO_HTTP_CACHE_TTL")
+        if env_ttl is not None:
+            try:
+                cache_ttl_seconds = int(env_ttl)
+            except ValueError:
+                logger.warning(
+                    "Invalid CAISO_HTTP_CACHE_TTL='%s', using default %ss",
+                    env_ttl,
+                    cache_ttl_seconds,
+                )
+
+        disabled = os.getenv("CAISO_HTTP_CACHE_DISABLED", "0").strip() in {
+            "1",
+            "true",
+            "True",
+        }
+        effective_ttl = 0 if disabled else cache_ttl_seconds
+
+        # Short-lived local cache for SingleZip downloads (reduces API calls & 429s)
+        self.http_cache = SimpleHTTPCache(
+            ttl_seconds=effective_ttl, namespace=cache_namespace
+        )
 
     async def get_lmp_data(
         self,
@@ -269,20 +297,40 @@ class CAISOClient(CAISORateLimitedClient):
         """
         logger.info(f"Fetching CAISO LMP data for node {pricing_node}")
 
-        # CAISO OASIS API parameters for LMP data
+        # CAISO OASIS parameters for PRC_LMP; timestamps are GMT (YYYYMMDDThh:mm-0000)
         params = {
             "queryname": "PRC_LMP",
             "version": "1",
             "market_run_id": market_type,
             "node": pricing_node,
             "startdatetime": f"{start_date}T00:00-0000",
-            "enddatetime": f"{start_date}T23:59-0000",  # Same day, just different time
+            # Inclusive end day at 23:59 for the requested range
+            "enddatetime": f"{end_date}T23:59-0000",
             "resultformat": "6",  # CSV format
         }
 
         try:
-            # CAISO returns CSV data, not JSON
-            response_text = await self.get_text("", params)
+            # Query the 'SingleZip' endpoint, which returns a ZIP containing one CSV.
+            # Try cache first using a canonical key derived from endpoint + params.
+            cache_key = SimpleHTTPCache.canonical_key("SingleZip", params)
+            zip_bytes = self.http_cache.get(cache_key)
+            if zip_bytes is None:
+                zip_bytes = await self.get_bytes("SingleZip", params)
+                # Best-effort cache write of the ZIP payload
+                self.http_cache.set(cache_key, zip_bytes)
+
+            # Extract first CSV file from zip
+            import io
+            import zipfile
+
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+                if not csv_names:
+                    logger.warning("CAISO ZIP contains no CSV files")
+                    return pd.DataFrame()
+                with zf.open(csv_names[0]) as f:
+                    response_text = f.read().decode("utf-8", errors="replace")
+
             return self._process_csv_response(response_text, pricing_node)
 
         except Exception as e:
@@ -301,13 +349,18 @@ class CAISOClient(CAISORateLimitedClient):
             Processed DataFrame with standardized columns
         """
         try:
-            # CAISO CSV typically starts with metadata, find the actual data
+            # CAISO CSV begins with metadata rows; locate the header
+            # and parse from there
             lines = csv_text.strip().split("\n")
 
-            # Find the header line (usually contains 'INTERVALSTARTTIME_GMT')
+            # Find the header line (look for common CAISO columns)
             header_idx = -1
             for i, line in enumerate(lines):
-                if "INTERVALSTARTTIME_GMT" in line or "OPR_DT" in line:
+                if (
+                    "INTERVALSTARTTIME_GMT" in line
+                    or "OPR_DT" in line
+                    or "INTERVALSTARTTIME" in line
+                ):
                     header_idx = i
                     break
 
@@ -315,7 +368,7 @@ class CAISOClient(CAISORateLimitedClient):
                 logger.warning("Could not find header in CAISO CSV response")
                 return pd.DataFrame()
 
-            # Read CSV from the header line
+            # Read CSV starting from the header line
             from io import StringIO
 
             csv_data = "\n".join(lines[header_idx:])
@@ -325,36 +378,98 @@ class CAISOClient(CAISORateLimitedClient):
                 logger.warning("Empty data from CAISO")
                 return pd.DataFrame()
 
-            # Standardize columns based on CAISO format
-            processed_df = pd.DataFrame()
-
-            # Handle different possible timestamp column names
-            timestamp_col = None
-            for col in ["INTERVALSTARTTIME_GMT", "OPR_DT", "TIMESTAMP"]:
-                if col in df.columns:
-                    timestamp_col = col
-                    break
-
-            if timestamp_col:
-                processed_df[ElectricityDataColumns.TIMESTAMP.value] = pd.to_datetime(
-                    df[timestamp_col]
+            # Timestamp handling: prefer INTERVALSTARTTIME_GMT; otherwise derive from
+            # OPR_DT, OPR_HR, OPR_INTERVAL (5- or 15-minute intervals); as a fallback
+            # accept a generic TIMESTAMP column.
+            ts_series = None
+            if "INTERVALSTARTTIME_GMT" in df.columns:
+                ts_series = pd.to_datetime(df["INTERVALSTARTTIME_GMT"], utc=True)
+            elif {
+                "OPR_DT",
+                "OPR_HR",
+                "OPR_INTERVAL",
+            }.issubset(df.columns):
+                # Build timestamp from date + hour + interval start (vectorized)
+                opr_dt = pd.to_datetime(df["OPR_DT"], errors="coerce", utc=True)
+                opr_hr = (
+                    pd.to_numeric(df["OPR_HR"], errors="coerce").fillna(0).astype(int)
+                    - 1
                 )
-
-            # Handle LMP price columns
-            price_col = None
-            for col in ["MW", "LMP_PRC", "PRC", "PRICE"]:
-                if col in df.columns:
-                    price_col = col
-                    break
-
-            if price_col:
-                # CAISO prices are already in $/MWh
-                processed_df[ElectricityDataColumns.PRICE_USD_MWH.value] = (
-                    pd.to_numeric(df[price_col], errors="coerce")
+                opr_itv = (
+                    pd.to_numeric(df["OPR_INTERVAL"], errors="coerce")
+                    .fillna(1)
+                    .astype(int)
+                    - 1
                 )
+                # Determine step: 5 minutes when OPR_INTERVAL spans >4; else 15
+                step_min = (
+                    5
+                    if (df["OPR_INTERVAL"].dropna().astype(int).max() or 0) > 4
+                    else 15
+                )
+                minutes = opr_itv * step_min
+                ts_series = (
+                    opr_dt
+                    + pd.to_timedelta(opr_hr, unit="h")
+                    + pd.to_timedelta(minutes, unit="m")
+                )
+            elif "TIMESTAMP" in df.columns:
+                ts_series = pd.to_datetime(df["TIMESTAMP"], utc=True)
 
-            # Remove any rows with NaN values
-            processed_df = processed_df.dropna()
+            if ts_series is None:
+                logger.warning("CAISO CSV missing recognizable timestamp columns")
+                return pd.DataFrame()
+
+            # Price handling for PRC_LMP: keep only LMP rows (XML_DATA_ITEM=LMP_PRC)
+            # and use the numeric value column (MW preferred).
+            price_series = None
+            if {"LMP_TYPE", "XML_DATA_ITEM"}.issubset(df.columns):
+                mask = df["LMP_TYPE"].astype(str).str.upper().eq("LMP") & df[
+                    "XML_DATA_ITEM"
+                ].astype(str).str.upper().eq("LMP_PRC")
+                lmp_rows = df[mask]
+                # Choose preferred value column
+                value_col = None
+                for col in ["MW", "VALUE", "LMP_PRC", "PRC", "PRICE"]:
+                    if col in lmp_rows.columns:
+                        value_col = col
+                        break
+                if value_col is not None:
+                    price_series = pd.to_numeric(lmp_rows[value_col], errors="coerce")
+                    # Align timestamps to the filtered rows
+                    if "INTERVALSTARTTIME_GMT" in df.columns:
+                        ts_series = pd.to_datetime(
+                            lmp_rows["INTERVALSTARTTIME_GMT"], utc=True
+                        )
+                    else:
+                        ts_series = ts_series.loc[lmp_rows.index]
+            else:
+                # Fallback heuristics if expected columns are missing
+                for col in ["MW", "VALUE", "LMP_PRC", "PRC", "PRICE"]:
+                    if col in df.columns:
+                        price_series = pd.to_numeric(df[col], errors="coerce")
+                        break
+
+            if price_series is None or ts_series is None:
+                logger.warning("CAISO CSV missing price or timestamp data")
+                return pd.DataFrame()
+
+            processed_df = pd.DataFrame(
+                {
+                    ElectricityDataColumns.TIMESTAMP.value: ts_series.dt.tz_convert(
+                        "UTC"
+                    ).dt.tz_localize(None),
+                    ElectricityDataColumns.PRICE_USD_MWH.value: price_series,
+                }
+            )
+
+            # Drop NaNs, sort by timestamp, and reset index
+            processed_df = processed_df.dropna().sort_values(
+                ElectricityDataColumns.TIMESTAMP.value
+            )
+
+            # Set timestamp as index so upstream caching (Parquet) can persist it
+            processed_df.set_index(ElectricityDataColumns.TIMESTAMP.value, inplace=True)
 
             logger.info(
                 f"Processed {len(processed_df)} CAISO data points "
@@ -487,27 +602,31 @@ class CAISOPriceProvider(BaseProvider, BasePriceProvider):
         Returns:
             DataFrame with columns: timestamp, price_usd_mwh
         """
-        # Convert datetime to string format expected by the existing method
-        start_date = start_time.strftime("%Y-%m-%d")
-        end_date = end_time.strftime("%Y-%m-%d")
+        # Prefer the generic cache-first pipeline from BaseProvider
+        # by updating the provider's date range and calling get_data().
+        self.start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Use existing async method (we'll need to handle this properly)
         import asyncio
+
+        async def _run():
+            try:
+                return await self.get_data()
+            except Exception as e:
+                logger.error(f"Error fetching CAISO data via cache-first path: {e}")
+                return pd.DataFrame()
 
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # If we're already in an async context, we need to handle
-                # this differently. For now, we'll create a new thread.
+                # If we're already in an async context, run in a worker thread
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run, self._get_lmp_data_async(start_date, end_date)
-                    )
+                    future = executor.submit(asyncio.run, _run())
                     return future.result()
             else:
-                return asyncio.run(self._get_lmp_data_async(start_date, end_date))
+                return asyncio.run(_run())
         except Exception as e:
             logger.error(f"Error getting CAISO price data: {e}")
             return pd.DataFrame()
@@ -622,22 +741,39 @@ class ElectricityPriceAnalyzer:
             DataFrame with combined generation, pricing, and value data
         """
         try:
-            # Align data by timestamp
-            if "date_time" in pv_generation_data.columns:
-                gen_data = pv_generation_data.copy()
-                gen_data["timestamp"] = pd.to_datetime(gen_data["date_time"])
-            else:
-                gen_data = pv_generation_data.copy()
-                if "timestamp" not in gen_data.columns:
+            # Normalize generation data to have a 'timestamp' column
+            gen_data = pv_generation_data.copy()
+            if "timestamp" not in gen_data.columns:
+                if "date_time" in gen_data.columns:
+                    gen_data["timestamp"] = pd.to_datetime(gen_data["date_time"])
+                elif isinstance(gen_data.index, pd.DatetimeIndex):
+                    gen_data = gen_data.reset_index().rename(
+                        columns={gen_data.index.name or "index": "timestamp"}
+                    )
+                else:
                     raise ValueError(
-                        "Generation data must have 'date_time' or 'timestamp' column"
+                        "Generation data must have a datetime index or "
+                        "'date_time'/'timestamp' column"
                     )
 
-            if "timestamp" not in price_data.columns:
-                raise ValueError("Price data must have 'timestamp' column")
+            # Normalize price data to have a 'timestamp' column
+            price_df = price_data.copy()
+            if "timestamp" not in price_df.columns:
+                if "date_time" in price_df.columns:
+                    price_df = price_df.rename(columns={"date_time": "timestamp"})
+                    price_df["timestamp"] = pd.to_datetime(price_df["timestamp"])
+                elif isinstance(price_df.index, pd.DatetimeIndex):
+                    price_df = price_df.reset_index().rename(
+                        columns={price_df.index.name or "index": "timestamp"}
+                    )
+                else:
+                    raise ValueError(
+                        "Price data must have a datetime index or "
+                        "'date_time'/'timestamp' column"
+                    )
 
             # Merge data on timestamp
-            combined_data = pd.merge(gen_data, price_data, on="timestamp", how="inner")
+            combined_data = pd.merge(gen_data, price_df, on="timestamp", how="inner")
 
             if combined_data.empty:
                 logger.warning(
