@@ -1,5 +1,13 @@
 """
-Tests for the data processing utilities.
+Tests for the data pr        sample_data = pd.DataFrame(
+            {
+                "ghi": range(24),
+                "dni": range(24, 48),
+                "dhi": range(48, 72),
+                "temperature_celsius": [20 + (i % 12) for i in range(24)],
+            },
+            index=dates,
+        )utilities.
 """
 
 import numpy as np
@@ -98,11 +106,17 @@ class TestStandardizeColumnNames:
             "shortwave_radiation": "ghi",
             "direct_normal_irradiance": "dni",
             "diffuse_radiation": "dhi",
-            "temperature_2m": "temp_air",
+            "temperature_2m": "temperature_celsius",
         }
         result = standardize_column_names(df, column_mapping)
 
-        expected_columns = ["ghi", "dni", "dhi", "temp_air", "unknown_column"]
+        expected_columns = [
+            "ghi",
+            "dni",
+            "dhi",
+            "temperature_celsius",
+            "unknown_column",
+        ]
         assert list(result.columns) == expected_columns
 
     def test_standardize_preserves_unknown_columns(self):

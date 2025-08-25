@@ -5,6 +5,7 @@ This module provides simple revenue calculation for solar producers selling
 power at real-time wholesale electricity prices (LMP) from CAISO.
 """
 
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -251,14 +252,20 @@ class SolarRevenueCalculator:
             hourly_data=data,
         )
 
-    async def get_hourly_analysis(self) -> pd.DataFrame:
+    async def get_hourly_analysis(
+        self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
+    ) -> pd.DataFrame:
         """
         Get detailed hourly analysis of solar generation vs LMP prices.
+
+        Args:
+            start_time: Optional start time for analysis
+            end_time: Optional end time for analysis
 
         Returns:
             DataFrame with hourly generation, LMP, and revenue data
         """
-        result = await self.calculate_revenue()
+        result = await self.calculate_revenue(start_time, end_time)
 
         if result.hourly_data is not None:
             # Return key columns for analysis

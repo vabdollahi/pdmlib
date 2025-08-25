@@ -93,7 +93,10 @@ def standardize_column_names(
         DataFrame with standardized column names
 
     Examples:
-        >>> mapping = {"temperature_2m": "temp_air", "shortwave_radiation": "ghi"}
+        >>> mapping = {
+        ...     "temperature_2m": "temperature_celsius",
+        ...     "shortwave_radiation": "ghi"
+        ... }
         >>> standardized_df = standardize_column_names(df, mapping)
     """
     return df.rename(columns=column_mapping)
