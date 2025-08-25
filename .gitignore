@@ -13,5 +13,11 @@ wheels/
 # Ruff
 .ruff_cache
 
-# data folder
-data
+# data folders
+# Ignore only the repository root data directory where cached outputs are stored
+/data/
+# But keep test fixtures checked in
+!/tests/data/
+
+# cache
+.cache/
