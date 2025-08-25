@@ -10,7 +10,10 @@ from typing import Optional
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from app.core.simulation.caiso_data import BasePriceProvider
+from app.core.simulation.price_provider import (
+    BasePriceProvider,
+    ElectricityDataColumns,
+)
 from app.core.simulation.pv_model import PVModel
 from app.core.utils.logging import get_logger
 
@@ -87,8 +90,8 @@ class SolarRevenueCalculator:
                 # For CAISO provider, try to use cached data or default dates
                 from datetime import datetime
 
-                default_start = datetime(2024, 7, 15)
-                default_end = datetime(2024, 7, 16)
+                default_start = datetime(2025, 7, 15)
+                default_end = datetime(2025, 7, 16)
                 price_data = self.price_provider.get_price_data(
                     default_start, default_end
                 )
@@ -116,15 +119,16 @@ class SolarRevenueCalculator:
 
         if len(generation_data) == 0:
             logger.warning("No solar generation data available")
+            price_col = ElectricityDataColumns.PRICE_DOLLAR_MWH.value
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
                 total_revenue_usd=0.0,
-                avg_lmp_usd_mwh=price_data["price_usd_mwh"].mean(),
-                min_lmp_usd_mwh=price_data["price_usd_mwh"].min(),
-                max_lmp_usd_mwh=price_data["price_usd_mwh"].max(),
-                negative_price_hours=len(price_data[price_data["price_usd_mwh"] < 0]),
+                avg_lmp_usd_mwh=price_data[price_col].mean(),
+                min_lmp_usd_mwh=price_data[price_col].min(),
+                max_lmp_usd_mwh=price_data[price_col].max(),
+                negative_price_hours=len(price_data[price_data[price_col] < 0]),
                 avg_revenue_per_mwh=0.0,
-                duck_curve_detected=price_data["price_usd_mwh"].min() < 0,
+                duck_curve_detected=price_data[price_col].min() < 0,
             )
 
         logger.info(f"Generated {len(generation_data)} generation data points")
@@ -134,15 +138,16 @@ class SolarRevenueCalculator:
 
         if len(combined_data) == 0:
             logger.warning("No overlapping data between prices and generation")
+            price_col = ElectricityDataColumns.PRICE_DOLLAR_MWH.value
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
                 total_revenue_usd=0.0,
-                avg_lmp_usd_mwh=price_data["price_usd_mwh"].mean(),
-                min_lmp_usd_mwh=price_data["price_usd_mwh"].min(),
-                max_lmp_usd_mwh=price_data["price_usd_mwh"].max(),
-                negative_price_hours=len(price_data[price_data["price_usd_mwh"] < 0]),
+                avg_lmp_usd_mwh=price_data[price_col].mean(),
+                min_lmp_usd_mwh=price_data[price_col].min(),
+                max_lmp_usd_mwh=price_data[price_col].max(),
+                negative_price_hours=len(price_data[price_data[price_col] < 0]),
                 avg_revenue_per_mwh=0.0,
-                duck_curve_detected=price_data["price_usd_mwh"].min() < 0,
+                duck_curve_detected=price_data[price_col].min() < 0,
             )
 
         logger.info(f"Aligned {len(combined_data)} data points for revenue calculation")
@@ -198,7 +203,8 @@ class SolarRevenueCalculator:
 
         # Convert power to MW if needed (assuming input might be in W)
         combined["generation_mw"] = combined[power_col] / 1000.0
-        combined["lmp_usd_mwh"] = combined["price_usd_mwh"]
+        price_col = ElectricityDataColumns.PRICE_DOLLAR_MWH.value
+        combined["lmp_usd_mwh"] = combined[price_col]
 
         # Calculate hourly revenue: LMP ($/MWh) × Generation (MW) × 1 hour
         combined["revenue_usd"] = combined["generation_mw"] * combined["lmp_usd_mwh"]

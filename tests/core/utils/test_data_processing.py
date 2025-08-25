@@ -22,7 +22,7 @@ class TestResampleTimeseriesData:
     @pytest.fixture
     def sample_hourly_data(self):
         """Create sample hourly data for testing."""
-        dates = pd.date_range("2024-01-01", periods=24, freq="h")
+        dates = pd.date_range("2025-01-01", periods=24, freq="h")
         return pd.DataFrame(
             {
                 "ghi": range(24),
@@ -142,7 +142,7 @@ class TestValidateTimeseriesData:
 
     def test_validate_valid_data(self):
         """Test validation of valid timeseries data."""
-        dates = pd.date_range("2024-01-01", periods=5, freq="h")
+        dates = pd.date_range("2025-01-01", periods=5, freq="h")
         df = pd.DataFrame({"value": [1, 2, 3, 4, 5]}, index=dates)
 
         result = validate_timeseries_data(df)
@@ -157,7 +157,7 @@ class TestValidateTimeseriesData:
 
     def test_validate_with_text_data_passes(self):
         """Test that text data passes validation (no numeric requirement)."""
-        dates = pd.date_range("2024-01-01", periods=3, freq="h")
+        dates = pd.date_range("2025-01-01", periods=3, freq="h")
         df = pd.DataFrame({"text_col": ["a", "b", "c"]}, index=dates)
 
         result = validate_timeseries_data(df)
@@ -165,7 +165,7 @@ class TestValidateTimeseriesData:
 
     def test_validate_mixed_data_types(self):
         """Test validation with mixed numeric data types."""
-        dates = pd.date_range("2024-01-01", periods=3, freq="h")
+        dates = pd.date_range("2025-01-01", periods=3, freq="h")
         df = pd.DataFrame(
             {"int_col": [1, 2, 3], "float_col": [1.1, 2.2, 3.3]}, index=dates
         )
@@ -175,7 +175,7 @@ class TestValidateTimeseriesData:
 
     def test_validate_with_nans_allowed(self):
         """Test validation with NaN values (should pass)."""
-        dates = pd.date_range("2024-01-01", periods=3, freq="h")
+        dates = pd.date_range("2025-01-01", periods=3, freq="h")
         df = pd.DataFrame({"value": [1, np.nan, 3]}, index=dates)
 
         result = validate_timeseries_data(df)
@@ -189,50 +189,50 @@ class TestFillMissingTimestamps:
         """Test filling missing timestamps in hourly data."""
         # Create data with gaps
         dates = [
-            pd.Timestamp("2024-01-01 00:00"),
-            pd.Timestamp("2024-01-01 01:00"),
+            pd.Timestamp("2025-01-01 00:00"),
+            pd.Timestamp("2025-01-01 01:00"),
             # Missing 02:00
-            pd.Timestamp("2024-01-01 03:00"),
-            pd.Timestamp("2024-01-01 04:00"),
+            pd.Timestamp("2025-01-01 03:00"),
+            pd.Timestamp("2025-01-01 04:00"),
         ]
         df = pd.DataFrame({"value": [1, 2, 4, 5]}, index=dates)
 
         result = fill_missing_timestamps(df, TimeInterval.HOURLY)
 
         assert len(result) == 5  # Should have 5 hours total
-        assert pd.Timestamp("2024-01-01 02:00") in result.index
+        assert pd.Timestamp("2025-01-01 02:00") in result.index
         # Default method is interpolate, so value should be interpolated, not NaN
-        assert result.loc["2024-01-01 02:00", "value"] == 3.0  # Interpolated
+        assert result.loc["2025-01-01 02:00", "value"] == 3.0  # Interpolated
 
     def test_fill_missing_with_forward_fill(self):
         """Test filling missing timestamps with forward fill method."""
         dates = [
-            pd.Timestamp("2024-01-01 00:00"),
-            pd.Timestamp("2024-01-01 02:00"),  # Gap at 01:00
+            pd.Timestamp("2025-01-01 00:00"),
+            pd.Timestamp("2025-01-01 02:00"),  # Gap at 01:00
         ]
         df = pd.DataFrame({"value": [10, 20]}, index=dates)
 
         result = fill_missing_timestamps(df, TimeInterval.HOURLY, method="forward_fill")
 
         assert len(result) == 3
-        assert result.loc["2024-01-01 01:00", "value"] == 10  # Forward filled
+        assert result.loc["2025-01-01 01:00", "value"] == 10  # Forward filled
 
     def test_fill_missing_with_interpolation(self):
         """Test filling missing timestamps with interpolation."""
         dates = [
-            pd.Timestamp("2024-01-01 00:00"),
-            pd.Timestamp("2024-01-01 02:00"),  # Gap at 01:00
+            pd.Timestamp("2025-01-01 00:00"),
+            pd.Timestamp("2025-01-01 02:00"),  # Gap at 01:00
         ]
         df = pd.DataFrame({"value": [10, 30]}, index=dates)
 
         result = fill_missing_timestamps(df, TimeInterval.HOURLY, method="interpolate")
 
         assert len(result) == 3
-        assert result.loc["2024-01-01 01:00", "value"] == 20  # Interpolated
+        assert result.loc["2025-01-01 01:00", "value"] == 20  # Interpolated
 
     def test_fill_missing_no_gaps(self):
         """Test filling when there are no missing timestamps."""
-        dates = pd.date_range("2024-01-01", periods=3, freq="h")
+        dates = pd.date_range("2025-01-01", periods=3, freq="h")
         df = pd.DataFrame({"value": [1, 2, 3]}, index=dates)
 
         result = fill_missing_timestamps(df, TimeInterval.HOURLY)
@@ -272,9 +272,9 @@ class TestDetectDataQualityIssues:
     def test_detect_duplicate_timestamps(self):
         """Test detection of duplicate timestamps."""
         dates = [
-            pd.Timestamp("2024-01-01 00:00"),
-            pd.Timestamp("2024-01-01 01:00"),
-            pd.Timestamp("2024-01-01 01:00"),  # Duplicate
+            pd.Timestamp("2025-01-01 00:00"),
+            pd.Timestamp("2025-01-01 01:00"),
+            pd.Timestamp("2025-01-01 01:00"),  # Duplicate
         ]
         df = pd.DataFrame({"value": [1, 2, 3]}, index=dates)
 
@@ -285,7 +285,7 @@ class TestDetectDataQualityIssues:
 
     def test_detect_no_issues(self):
         """Test detection when data has no quality issues."""
-        dates = pd.date_range("2024-01-01", periods=5, freq="h")
+        dates = pd.date_range("2025-01-01", periods=5, freq="h")
         df = pd.DataFrame({"value": [1, 2, 3, 4, 5]}, index=dates)
 
         issues = detect_data_quality_issues(df)
@@ -299,9 +299,9 @@ class TestDetectDataQualityIssues:
     def test_detect_mixed_issues(self):
         """Test detection of multiple quality issues."""
         dates = [
-            pd.Timestamp("2024-01-01 00:00"),
-            pd.Timestamp("2024-01-01 01:00"),
-            pd.Timestamp("2024-01-01 01:00"),  # Duplicate
+            pd.Timestamp("2025-01-01 00:00"),
+            pd.Timestamp("2025-01-01 01:00"),
+            pd.Timestamp("2025-01-01 01:00"),  # Duplicate
         ]
         df = pd.DataFrame(
             {

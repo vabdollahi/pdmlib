@@ -35,7 +35,7 @@ Examples:
   uv run task start        # Runs the FastAPI server (dev)
   uv run task test         # Runs all tests
   uv run task lint         # Runs code linting checks
-  uv run task lint-format  # Formats and sorts imports
+  uv run task lint-fix  # Formats and sorts imports
 ```
 
 ## Testing
@@ -57,7 +57,7 @@ Lint code:
 ```
 Format code and sort imports:
 ```
-  uv run task lint-format
+  uv run task lint-fix
 ```
 Or run the tools directly:
 ```

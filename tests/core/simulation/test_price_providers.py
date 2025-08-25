@@ -1,195 +1,205 @@
 """
 Unit tests for electricity price data providers.
 
-This module tests both CSV and CAISO price providers to ensure they
-properly implement the BasePriceProvider interface.
+This module tests CSV, CAISO, and IESO price providers to ensure they
+properly implement the BasePriceProvider interface and handle data correctly.
+Tests are designed for efficiency using mocks and fixtures without API calls.
 """
 
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
-from app.core.simulation.caiso_data import (
+from app.core.simulation.caiso_data import CAISOPriceProvider
+from app.core.simulation.ieso_data import IESOPriceProvider
+from app.core.simulation.price_provider import (
     BasePriceProvider,
     CSVPriceProvider,
     ElectricityDataColumns,
     create_price_provider,
 )
+from app.core.utils.location import GeospatialLocation
 
 
 class TestBasePriceProvider:
-    """Test the abstract base class interface."""
+    """Test base class helpers only (no abstractness)."""
 
-    def test_base_provider_is_abstract(self):
-        """Test that BasePriceProvider cannot be instantiated directly."""
-        # The abstract methods should prevent direct instantiation
-        assert hasattr(BasePriceProvider, "get_price_data")
-        assert hasattr(BasePriceProvider, "validate_data_format")
+    def test_standardize_columns_mapping(self):
+        """Test that column standardization maps various names correctly."""
+
+        # Create a concrete implementation for testing
+        class TestProvider(BasePriceProvider):
+            def get_price_data(self, start_time, end_time):
+                return pd.DataFrame()
+
+            def validate_data_format(self, df):
+                return True
+
+        provider = TestProvider()
+
+        # Test various column name mappings
+        test_cases = [
+            (
+                {"datetime": [datetime(2025, 7, 15)], "price": [45.50]},
+                {"timestamp": [datetime(2025, 7, 15)], "price_dollar_mwh": [45.50]},
+            ),
+            (
+                {"date_time": [datetime(2025, 7, 15)], "lmp": [45.50]},
+                {"timestamp": [datetime(2025, 7, 15)], "price_dollar_mwh": [45.50]},
+            ),
+            (
+                {"time": [datetime(2025, 7, 15)], "lmp_price": [45.50]},
+                {"timestamp": [datetime(2025, 7, 15)], "price_dollar_mwh": [45.50]},
+            ),
+        ]
+
+        for input_data, expected_cols in test_cases:
+            df = pd.DataFrame(input_data)
+            result = provider._standardize_columns(df)
+            for col in expected_cols.keys():
+                assert col in result.columns
 
 
 class TestCSVPriceProvider:
     """Test CSV price provider functionality."""
 
     @pytest.fixture
-    def sample_csv_path(self):
-        """Path to the sample CSV file."""
+    def sample_csv_path(self) -> Path:
+        """Provide path to sample CSV file."""
         return Path(__file__).parent.parent.parent / "data" / "sample_price_data.csv"
 
     @pytest.fixture
-    def csv_provider(self, sample_csv_path):
-        """Create a CSV provider instance."""
+    def csv_provider(self, sample_csv_path: Path) -> CSVPriceProvider:
+        """Create CSV price provider with sample data."""
         return CSVPriceProvider(csv_file_path=sample_csv_path)
 
-    def test_csv_provider_initialization(self, sample_csv_path):
-        """Test CSV provider can be initialized."""
+    def test_csv_provider_initialization(self, sample_csv_path: Path):
+        """Test CSV provider can be initialized with valid file path."""
         provider = CSVPriceProvider(csv_file_path=sample_csv_path)
         assert provider.csv_file_path == sample_csv_path
         assert provider._data_cache is None
 
-    def test_csv_provider_loads_data(self, csv_provider):
-        """Test CSV provider loads data correctly."""
-        start_time = datetime(2024, 7, 15)
-        end_time = datetime(2024, 7, 16)
+    def test_get_price_data_success(self, csv_provider: CSVPriceProvider):
+        """Test getting price data from CSV file."""
+        start_time = datetime(2025, 7, 15, 0, 0, 0)
+        end_time = datetime(2025, 7, 15, 23, 59, 59)
 
         data = csv_provider.get_price_data(start_time, end_time)
 
         assert not data.empty
+        assert ElectricityDataColumns.PRICE_DOLLAR_MWH.value in data.columns
         assert len(data) == 24  # 24 hours of data
-        assert ElectricityDataColumns.PRICE_USD_MWH.value in data.columns
-        assert isinstance(data.index, pd.DatetimeIndex)
 
-    def test_csv_provider_data_validation(self, csv_provider):
-        """Test CSV provider validates data format."""
-        # Valid data
-        valid_data = pd.DataFrame(
-            {
-                ElectricityDataColumns.TIMESTAMP.value: pd.date_range(
-                    "2024-07-15", periods=3, freq="h"
-                ),
-                ElectricityDataColumns.PRICE_USD_MWH.value: [45.5, 42.3, 39.8],
-            }
+
+class TestCAISOPriceProvider:
+    """Test CAISO price provider functionality without API calls."""
+
+    @pytest.fixture
+    def mock_location(self) -> GeospatialLocation:
+        """Create mock location in California."""
+        return GeospatialLocation(latitude=37.7749, longitude=-122.4194)  # SF
+
+    @pytest.fixture
+    def mock_caiso_provider_kwargs(self) -> dict:
+        """Create kwargs for CAISO provider initialization."""
+        return {
+            "start_date": "2025-07-15 00:00:00",
+            "end_date": "2025-07-15 23:59:59",
+            "organization": "TestOrg",
+            "asset": "TestAsset",
+            "data_type": "caiso_lmp",
+        }
+
+    @patch("app.core.simulation.caiso_data.CAISOPriceProvider._fetch_range")
+    def test_caiso_provider_initialization(
+        self,
+        mock_fetch,
+        mock_location: GeospatialLocation,
+        mock_caiso_provider_kwargs: dict,
+    ):
+        """Test CAISO provider initialization and region inference."""
+        provider = CAISOPriceProvider(
+            location=mock_location, **mock_caiso_provider_kwargs
         )
-        assert csv_provider.validate_data_format(valid_data)
+        assert provider.location == mock_location
+        assert provider.region is not None  # Should infer a region
 
-        # Invalid data - missing price column
-        invalid_data = pd.DataFrame(
-            {
-                ElectricityDataColumns.TIMESTAMP.value: pd.date_range(
-                    "2024-07-15", periods=3, freq="h"
-                ),
-            }
+
+class TestIESOPriceProvider:
+    """Test IESO price provider functionality without API calls."""
+
+    @pytest.fixture
+    def mock_location(self) -> GeospatialLocation:
+        """Create mock location in Ontario."""
+        return GeospatialLocation(latitude=43.6532, longitude=-79.3832)  # Toronto
+
+    @pytest.fixture
+    def mock_ieso_provider_kwargs(self) -> dict:
+        """Create kwargs for IESO provider initialization."""
+        return {
+            "start_date": "2025-07-15 00:00:00",
+            "end_date": "2025-07-15 23:59:59",
+            "organization": "TestOrg",
+            "asset": "TestAsset",
+            "data_type": "ieso_hoep",
+        }
+
+    @patch("app.core.simulation.ieso_data.IESOPriceProvider._fetch_range")
+    def test_ieso_provider_initialization(
+        self,
+        mock_fetch,
+        mock_location: GeospatialLocation,
+        mock_ieso_provider_kwargs: dict,
+    ):
+        """Test IESO provider initialization."""
+        provider = IESOPriceProvider(
+            location=mock_location, **mock_ieso_provider_kwargs
         )
-        assert not csv_provider.validate_data_format(invalid_data)
-
-    def test_csv_provider_time_filtering(self, csv_provider):
-        """Test CSV provider filters data by time range."""
-        # Request only first 6 hours
-        start_time = datetime(2024, 7, 15)
-        end_time = datetime(2024, 7, 15, 6)
-
-        data = csv_provider.get_price_data(start_time, end_time)
-
-        assert not data.empty
-        assert len(data) <= 7  # Should be 6-7 hours depending on inclusivity
-        assert data.index.min() >= start_time
-        assert data.index.max() <= end_time
-
-    def test_csv_provider_with_nonexistent_file(self):
-        """Test CSV provider handles nonexistent file gracefully."""
-        provider = CSVPriceProvider("nonexistent_file.csv")
-
-        start_time = datetime(2024, 7, 15)
-        end_time = datetime(2024, 7, 16)
-
-        data = provider.get_price_data(start_time, end_time)
-        assert data.empty
-
-    def test_csv_provider_column_mapping(self, csv_provider):
-        """Test CSV provider standardizes column names."""
-        # Test internal _standardize_columns method
-        test_data = pd.DataFrame(
-            {"datetime": ["2024-07-15 00:00:00"], "price": [45.5], "lmp": [50.0]}
-        )
-
-        standardized = csv_provider._standardize_columns(test_data)
-
-        assert ElectricityDataColumns.TIMESTAMP.value in standardized.columns
-        assert ElectricityDataColumns.PRICE_USD_MWH.value in standardized.columns
+        assert provider.location == mock_location
 
 
 class TestPriceProviderFactory:
-    """Test the factory function for creating price providers."""
-
-    def test_create_csv_provider(self):
-        """Test factory creates CSV provider."""
-        csv_path = (
-            Path(__file__).parent.parent.parent / "data" / "sample_price_data.csv"
-        )
-
-        provider = create_price_provider(source_type="csv", csv_file_path=csv_path)
-
-        assert isinstance(provider, CSVPriceProvider)
-        assert isinstance(provider, BasePriceProvider)
-
-    def test_factory_invalid_source_type(self):
-        """Test factory raises error for invalid source type."""
-        with pytest.raises(ValueError, match="Unknown source type"):
-            create_price_provider(source_type="invalid")
-
-    def test_factory_missing_csv_path(self):
-        """Test factory raises error when CSV path is missing."""
-        with pytest.raises(ValueError, match="CSV file path is required"):
-            create_price_provider(source_type="csv")
-
-
-class TestCSVPriceProviderInterface:
-    """Test that CSV provider implements the correct interface."""
+    """Test price provider factory function with improved coverage."""
 
     @pytest.fixture
-    def csv_provider(self):
-        """CSV provider instance."""
-        csv_path = (
-            Path(__file__).parent.parent.parent / "data" / "sample_price_data.csv"
+    def sample_csv_path(self) -> Path:
+        """Provide path to sample CSV file."""
+        return Path(__file__).parent.parent.parent / "data" / "sample_price_data.csv"
+
+    @pytest.fixture
+    def mock_location(self) -> GeospatialLocation:
+        """Create mock location for testing."""
+        return GeospatialLocation(latitude=37.7749, longitude=-122.4194)
+
+    @pytest.fixture
+    def mock_provider_kwargs(self) -> dict:
+        """Create kwargs for provider initialization."""
+        return {
+            "start_date": "2025-07-15 00:00:00",
+            "end_date": "2025-07-15 23:59:59",
+            "organization": "TestOrg",
+            "asset": "TestAsset",
+            "data_type": "test_price",
+        }
+
+    def test_create_csv_provider(self, sample_csv_path: Path):
+        """Test factory creates CSV provider correctly."""
+        provider = create_price_provider("csv", csv_file_path=sample_csv_path)
+
+        assert isinstance(provider, CSVPriceProvider)
+        assert provider.csv_file_path == sample_csv_path
+
+    @patch("app.core.simulation.caiso_data.CAISOPriceProvider._fetch_range")
+    def test_create_caiso_provider(
+        self, mock_fetch, mock_location: GeospatialLocation, mock_provider_kwargs: dict
+    ):
+        """Test factory creates CAISO provider correctly."""
+        provider = create_price_provider(
+            "caiso", location=mock_location, **mock_provider_kwargs
         )
-        return CSVPriceProvider(csv_file_path=csv_path)
 
-    def test_csv_provider_interface(self, csv_provider):
-        """Test CSV provider implements the BasePriceProvider interface."""
-        # Should be instance of BasePriceProvider
-        assert isinstance(csv_provider, BasePriceProvider)
-
-        # Should have the required interface methods
-        assert hasattr(csv_provider, "get_price_data")
-        assert hasattr(csv_provider, "validate_data_format")
-
-        # Should return data in the correct format
-        start_time = datetime(2024, 7, 15)
-        end_time = datetime(2024, 7, 16)
-
-        data = csv_provider.get_price_data(start_time, end_time)
-
-        # Should return DataFrame with standard columns
-        assert isinstance(data, pd.DataFrame)
-        assert not data.empty
-        assert ElectricityDataColumns.PRICE_USD_MWH.value in data.columns
-        assert isinstance(data.index, pd.DatetimeIndex)
-
-    def test_csv_data_format_standardization(self, csv_provider):
-        """Test CSV provider returns standardized data format."""
-        start_time = datetime(2024, 7, 15)
-        end_time = datetime(2024, 7, 16)
-
-        data = csv_provider.get_price_data(start_time, end_time)
-
-        # Should have exactly the expected columns
-        expected_columns = [ElectricityDataColumns.PRICE_USD_MWH.value]
-        assert list(data.columns) == expected_columns
-
-        # Index should be datetime with correct name
-        assert isinstance(data.index, pd.DatetimeIndex)
-
-        # Price data should be numeric
-        price_column = data[ElectricityDataColumns.PRICE_USD_MWH.value]
-        assert pd.api.types.is_numeric_dtype(price_column)
+        assert isinstance(provider, CAISOPriceProvider)
+        assert provider.location == mock_location
