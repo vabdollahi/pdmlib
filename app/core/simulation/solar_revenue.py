@@ -1,0 +1,263 @@
+"""
+Solar power revenue calculation using real electricity market prices.
+
+This module provides simple revenue calculation for solar producers selling
+power at real-time wholesale electricity prices (LMP) from CAISO.
+"""
+
+from typing import Optional
+
+import pandas as pd
+from pydantic import BaseModel, Field
+
+from app.core.simulation.caiso_data import BasePriceProvider
+from app.core.simulation.pv_model import PVModel
+from app.core.utils.logging import get_logger
+
+logger = get_logger("solar_revenue")
+
+
+class SolarRevenueResult(BaseModel):
+    """Results from solar revenue calculation."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    total_generation_mwh: float = Field(description="Total solar generation in MWh")
+    total_revenue_usd: float = Field(description="Total revenue in USD")
+    avg_lmp_usd_mwh: float = Field(description="Average LMP price")
+    min_lmp_usd_mwh: float = Field(description="Minimum LMP price")
+    max_lmp_usd_mwh: float = Field(description="Maximum LMP price")
+    negative_price_hours: int = Field(description="Hours with negative LMP")
+    avg_revenue_per_mwh: float = Field(description="Average revenue per MWh")
+    duck_curve_detected: bool = Field(
+        description="Whether Duck Curve effect was detected"
+    )
+    hourly_data: Optional[pd.DataFrame] = Field(default=None, exclude=True)
+
+
+class SolarRevenueCalculator:
+    """
+    Calculator for solar power revenue using real CAISO LMP prices.
+
+    This class demonstrates the core economics of solar power:
+    - Solar producers are paid the real-time Locational Marginal Price (LMP)
+    - LMP can go negative during high solar production (Duck Curve effect)
+    - Revenue = Generation (MW) × LMP ($/MWh) × Hours
+    """
+
+    def __init__(
+        self,
+        price_provider: BasePriceProvider,
+        pv_model: PVModel,
+    ):
+        """
+        Initialize the solar revenue calculator.
+
+        Args:
+            price_provider: CAISO price data provider
+            pv_model: Solar PV generation model
+        """
+        self.price_provider = price_provider
+        self.pv_model = pv_model
+        logger.info("Initialized solar revenue calculator")
+
+    async def calculate_revenue(
+        self, start_time=None, end_time=None
+    ) -> SolarRevenueResult:
+        """
+        Calculate solar revenue using real LMP prices.
+
+        Args:
+            start_time: Start datetime for calculation (optional)
+            end_time: End datetime for calculation (optional)
+
+        Returns:
+            SolarRevenueResult with detailed revenue analysis
+        """
+        logger.info("Starting solar revenue calculation")
+
+        # Get LMP price data
+        logger.info("Fetching LMP data")
+        if start_time and end_time:
+            price_data = self.price_provider.get_price_data(start_time, end_time)
+        else:
+            # For backward compatibility, try to get data from the provider's cache
+            # This assumes the provider has been configured with dates already
+            if hasattr(self.price_provider, "_fetch_range"):
+                # For CAISO provider, try to use cached data or default dates
+                from datetime import datetime
+
+                default_start = datetime(2024, 7, 15)
+                default_end = datetime(2024, 7, 16)
+                price_data = self.price_provider.get_price_data(
+                    default_start, default_end
+                )
+            else:
+                price_data = pd.DataFrame()
+
+        if len(price_data) == 0:
+            logger.warning("No LMP price data available")
+            return SolarRevenueResult(
+                total_generation_mwh=0.0,
+                total_revenue_usd=0.0,
+                avg_lmp_usd_mwh=0.0,
+                min_lmp_usd_mwh=0.0,
+                max_lmp_usd_mwh=0.0,
+                negative_price_hours=0,
+                avg_revenue_per_mwh=0.0,
+                duck_curve_detected=False,
+            )
+
+        logger.info(f"Retrieved {len(price_data)} LMP data points")
+
+        # Get solar generation data
+        logger.info("Calculating solar generation")
+        generation_data = await self.pv_model.run_simulation()
+
+        if len(generation_data) == 0:
+            logger.warning("No solar generation data available")
+            return SolarRevenueResult(
+                total_generation_mwh=0.0,
+                total_revenue_usd=0.0,
+                avg_lmp_usd_mwh=price_data["price_usd_mwh"].mean(),
+                min_lmp_usd_mwh=price_data["price_usd_mwh"].min(),
+                max_lmp_usd_mwh=price_data["price_usd_mwh"].max(),
+                negative_price_hours=len(price_data[price_data["price_usd_mwh"] < 0]),
+                avg_revenue_per_mwh=0.0,
+                duck_curve_detected=price_data["price_usd_mwh"].min() < 0,
+            )
+
+        logger.info(f"Generated {len(generation_data)} generation data points")
+
+        # Align data by hour
+        combined_data = self._align_data(price_data, generation_data)
+
+        if len(combined_data) == 0:
+            logger.warning("No overlapping data between prices and generation")
+            return SolarRevenueResult(
+                total_generation_mwh=0.0,
+                total_revenue_usd=0.0,
+                avg_lmp_usd_mwh=price_data["price_usd_mwh"].mean(),
+                min_lmp_usd_mwh=price_data["price_usd_mwh"].min(),
+                max_lmp_usd_mwh=price_data["price_usd_mwh"].max(),
+                negative_price_hours=len(price_data[price_data["price_usd_mwh"] < 0]),
+                avg_revenue_per_mwh=0.0,
+                duck_curve_detected=price_data["price_usd_mwh"].min() < 0,
+            )
+
+        logger.info(f"Aligned {len(combined_data)} data points for revenue calculation")
+
+        # Calculate revenue
+        return self._calculate_revenue_metrics(combined_data)
+
+    def _align_data(
+        self, price_data: pd.DataFrame, generation_data: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Align price and generation data by hour."""
+
+        # Prepare price data
+        price_df = price_data.copy()
+
+        # Ensure index is datetime
+        if not isinstance(price_df.index, pd.DatetimeIndex):
+            if "timestamp" in price_df.columns:
+                price_df.set_index("timestamp", inplace=True)
+            else:
+                price_df.index = pd.to_datetime(price_df.index)
+
+        price_df["hour"] = price_df.index.to_series().dt.floor("h")
+
+        # Prepare generation data
+        generation_df = generation_data.copy()
+
+        # Ensure index is datetime
+        if not isinstance(generation_df.index, pd.DatetimeIndex):
+            if "date_time" in generation_df.columns:
+                generation_df.set_index("date_time", inplace=True)
+            else:
+                generation_df.index = pd.to_datetime(generation_df.index)
+
+        generation_df["hour"] = generation_df.index.to_series().dt.floor("h")
+
+        # Find power output column
+        power_col = None
+        for col in generation_df.columns:
+            if "power" in col.lower() or "output" in col.lower():
+                power_col = col
+                break
+
+        if power_col is None:
+            logger.error("No power output column found in generation data")
+            logger.error(f"Available columns: {list(generation_df.columns)}")
+            return pd.DataFrame()
+
+        # Merge data
+        combined = price_df.reset_index().merge(
+            generation_df.reset_index(), on="hour", how="inner"
+        )
+
+        # Convert power to MW if needed (assuming input might be in W)
+        combined["generation_mw"] = combined[power_col] / 1000.0
+        combined["lmp_usd_mwh"] = combined["price_usd_mwh"]
+
+        # Calculate hourly revenue: LMP ($/MWh) × Generation (MW) × 1 hour
+        combined["revenue_usd"] = combined["generation_mw"] * combined["lmp_usd_mwh"]
+
+        return combined
+
+    def _calculate_revenue_metrics(self, data: pd.DataFrame) -> SolarRevenueResult:
+        """Calculate revenue metrics from aligned data."""
+
+        # Basic metrics
+        total_generation_mwh = data["generation_mw"].sum()
+        total_revenue_usd = data["revenue_usd"].sum()
+        avg_lmp_usd_mwh = data["lmp_usd_mwh"].mean()
+        min_lmp_usd_mwh = data["lmp_usd_mwh"].min()
+        max_lmp_usd_mwh = data["lmp_usd_mwh"].max()
+
+        # Duck Curve analysis
+        negative_price_hours = len(data[data["lmp_usd_mwh"] < 0])
+        duck_curve_detected = min_lmp_usd_mwh < 0
+
+        # Average revenue per MWh
+        avg_revenue_per_mwh = 0.0
+        if total_generation_mwh > 0:
+            avg_revenue_per_mwh = total_revenue_usd / total_generation_mwh
+
+        logger.info(
+            f"Revenue calculation complete: "
+            f"${total_revenue_usd:.2f} from {total_generation_mwh:.2f} MWh"
+        )
+        if duck_curve_detected:
+            logger.info(
+                f"Duck Curve detected: {negative_price_hours} hours with negative LMP"
+            )
+
+        return SolarRevenueResult(
+            total_generation_mwh=total_generation_mwh,
+            total_revenue_usd=total_revenue_usd,
+            avg_lmp_usd_mwh=avg_lmp_usd_mwh,
+            min_lmp_usd_mwh=min_lmp_usd_mwh,
+            max_lmp_usd_mwh=max_lmp_usd_mwh,
+            negative_price_hours=negative_price_hours,
+            avg_revenue_per_mwh=avg_revenue_per_mwh,
+            duck_curve_detected=duck_curve_detected,
+            hourly_data=data,
+        )
+
+    async def get_hourly_analysis(self) -> pd.DataFrame:
+        """
+        Get detailed hourly analysis of solar generation vs LMP prices.
+
+        Returns:
+            DataFrame with hourly generation, LMP, and revenue data
+        """
+        result = await self.calculate_revenue()
+
+        if result.hourly_data is not None:
+            # Return key columns for analysis
+            return result.hourly_data[
+                ["hour", "generation_mw", "lmp_usd_mwh", "revenue_usd"]
+            ].sort_values("hour")
+
+        return pd.DataFrame()

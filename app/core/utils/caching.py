@@ -88,15 +88,18 @@ class BaseProvider(BaseModel, ABC):
                 start_date=self.start_date, end_date=self.end_date
             )
 
-            # Save the fresh data to cache
-            logger.info("Saving fresh data to Parquet store")
-            self.storage.write_data(
-                df=fresh_data,
-                organization=self.organization,
-                asset=self.asset,
-                data_type=self.data_type,
-                location=self.location,
-            )
+            # Save the fresh data to cache only if there's actual data
+            if not fresh_data.empty and isinstance(fresh_data.index, pd.DatetimeIndex):
+                logger.info("Saving fresh data to Parquet store")
+                self.storage.write_data(
+                    df=fresh_data,
+                    organization=self.organization,
+                    asset=self.asset,
+                    data_type=self.data_type,
+                    location=self.location,
+                )
+            else:
+                logger.info("No fresh data to save (empty or invalid DataFrame)")
 
             return fresh_data
 
@@ -151,14 +154,19 @@ class BaseProvider(BaseModel, ABC):
 
         # 4. Combine and save the new data
         new_data_df = pd.concat(new_data_list)
-        logger.info("Saving newly fetched data to Parquet store")
-        self.storage.write_data(
-            df=new_data_df,
-            organization=self.organization,
-            asset=self.asset,
-            data_type=self.data_type,
-            location=self.location,
-        )
+
+        # Only save if there's actual data to save
+        if not new_data_df.empty and isinstance(new_data_df.index, pd.DatetimeIndex):
+            logger.info("Saving newly fetched data to Parquet store")
+            self.storage.write_data(
+                df=new_data_df,
+                organization=self.organization,
+                asset=self.asset,
+                data_type=self.data_type,
+                location=self.location,
+            )
+        else:
+            logger.info("No new data to save (empty or invalid DataFrame)")
 
         # 5. Return the complete, combined dataset
         final_df = pd.concat([cached_data, new_data_df]).sort_index()
