@@ -2,7 +2,7 @@
 Electricity price data providers and analysis module for CAISO.
 
 Provider-specific logic for CAISO lives here. Shared primitives like
-ElectricityDataColumns and BasePriceProvider live in price_provider.py.
+PriceColumns and BasePriceProvider live in price_provider.py.
 """
 
 from datetime import datetime
@@ -14,7 +14,7 @@ from pydantic import Field, model_validator
 
 from app.core.simulation.price_provider import (
     BasePriceProvider,
-    ElectricityDataColumns,
+    PriceColumns,
 )
 from app.core.utils.api_clients import CAISORateLimitedClient
 from app.core.utils.caching import BaseProvider
@@ -270,20 +270,20 @@ class CAISOClient(CAISORateLimitedClient):
 
             processed_df = pd.DataFrame(
                 {
-                    ElectricityDataColumns.TIMESTAMP.value: ts_series.dt.tz_convert(
+                    PriceColumns.TIMESTAMP.value: ts_series.dt.tz_convert(
                         "UTC"
                     ).dt.tz_localize(None),
-                    ElectricityDataColumns.PRICE_DOLLAR_MWH.value: price_series,
+                    PriceColumns.PRICE_DOLLAR_MWH.value: price_series,
                 }
             )
 
             # Drop NaNs, sort by timestamp, and reset index
             processed_df = processed_df.dropna().sort_values(
-                ElectricityDataColumns.TIMESTAMP.value
+                PriceColumns.TIMESTAMP.value
             )
 
             # Set timestamp as index so upstream caching (Parquet) can persist it
-            processed_df.set_index(ElectricityDataColumns.TIMESTAMP.value, inplace=True)
+            processed_df.set_index(PriceColumns.TIMESTAMP.value, inplace=True)
 
             logger.info(
                 f"Processed {len(processed_df)} CAISO data points "
@@ -334,6 +334,11 @@ class CAISOPriceProvider(BaseProvider, BasePriceProvider):
 
     def __init__(self, location: GeospatialLocation, **kwargs):
         super().__init__(location=location, **kwargs)
+
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
+        """Set date range for CAISO data retrieval."""
+        self.start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
     def model_post_init(self, __context):
         """Post-initialization setup."""
@@ -429,12 +434,12 @@ class CAISOPriceProvider(BaseProvider, BasePriceProvider):
 
         # Check if required columns exist (allowing for index-based timestamp)
         has_timestamp = (
-            ElectricityDataColumns.TIMESTAMP.value in df.columns
-            or df.index.name == ElectricityDataColumns.TIMESTAMP.value
+            PriceColumns.TIMESTAMP.value in df.columns
+            or df.index.name == PriceColumns.TIMESTAMP.value
             or isinstance(df.index, pd.DatetimeIndex)
         )
 
-        has_price = ElectricityDataColumns.PRICE_DOLLAR_MWH.value in df.columns
+        has_price = PriceColumns.PRICE_DOLLAR_MWH.value in df.columns
 
         if not (has_timestamp and has_price):
             logger.error("CAISO data missing required columns")

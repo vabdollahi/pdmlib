@@ -21,7 +21,7 @@ from app.core.utils.location import GeospatialLocation
 @pytest.fixture
 def plant_config_data():
     cfg = (
-        Path(__file__).parent.parent.parent / "config" / "test_solar_battery_plant.json"
+        Path(__file__).parent.parent.parent / "config" / "solar_battery_plant_test.json"
     )
     with open(cfg, "r") as f:
         return json.load(f)

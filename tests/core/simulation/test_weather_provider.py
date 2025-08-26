@@ -20,7 +20,7 @@ from app.core.simulation.open_meteo_data import (
 from app.core.simulation.weather_provider import (
     BaseWeatherProvider,
     CSVWeatherProvider,
-    WeatherDataColumns,
+    WeatherColumns,
     WeatherProvider,
 )
 from app.core.utils.location import GeospatialLocation
@@ -449,10 +449,10 @@ class TestCSVWeatherProvider:
         data = await csv_provider.get_data()
 
         assert not data.empty
-        assert WeatherDataColumns.GHI.value in data.columns
-        assert WeatherDataColumns.TEMPERATURE.value in data.columns
-        assert WeatherDataColumns.DNI.value in data.columns
-        assert WeatherDataColumns.DHI.value in data.columns
+        assert WeatherColumns.GHI.value in data.columns
+        assert WeatherColumns.TEMPERATURE.value in data.columns
+        assert WeatherColumns.DNI.value in data.columns
+        assert WeatherColumns.DHI.value in data.columns
         assert len(data) == 24  # 24 hours of data
 
     @pytest.mark.asyncio
@@ -468,7 +468,7 @@ class TestCSVWeatherProvider:
         assert not data.empty
         assert len(data) == 5  # 10:00, 11:00, 12:00, 13:00, 14:00
         # Check that we get expected GHI values for midday hours
-        assert data[WeatherDataColumns.GHI.value].max() > 700
+        assert data[WeatherColumns.GHI.value].max() > 700
 
     @pytest.mark.asyncio
     async def test_ghi_only_csv_with_radiation_decomposition(
@@ -481,17 +481,17 @@ class TestCSVWeatherProvider:
         data = await ghi_only_csv_provider.get_data()
 
         assert not data.empty
-        assert WeatherDataColumns.GHI.value in data.columns
-        assert WeatherDataColumns.TEMPERATURE.value in data.columns
-        assert WeatherDataColumns.DNI.value in data.columns  # Should be calculated
-        assert WeatherDataColumns.DHI.value in data.columns  # Should be calculated
+        assert WeatherColumns.GHI.value in data.columns
+        assert WeatherColumns.TEMPERATURE.value in data.columns
+        assert WeatherColumns.DNI.value in data.columns  # Should be calculated
+        assert WeatherColumns.DHI.value in data.columns  # Should be calculated
 
         # Verify radiation decomposition worked - DNI and DHI should be non-zero
         noon_row = data[data.index == datetime(2025, 7, 15, 12, 0, 0)]
         assert not noon_row.empty
-        assert noon_row[WeatherDataColumns.GHI.value].iloc[0] > 0
-        assert noon_row[WeatherDataColumns.DNI.value].iloc[0] > 0
-        assert noon_row[WeatherDataColumns.DHI.value].iloc[0] > 0
+        assert noon_row[WeatherColumns.GHI.value].iloc[0] > 0
+        assert noon_row[WeatherColumns.DNI.value].iloc[0] > 0
+        assert noon_row[WeatherColumns.DHI.value].iloc[0] > 0
 
     @pytest.mark.asyncio
     async def test_csv_provider_with_missing_file(
@@ -520,10 +520,10 @@ class TestCSVWeatherProvider:
         ) as mock_calculate:
             mock_calculate.return_value = pd.DataFrame(
                 {
-                    WeatherDataColumns.GHI.value: [500.0],
-                    WeatherDataColumns.DNI.value: [700.0],
-                    WeatherDataColumns.DHI.value: [200.0],
-                    WeatherDataColumns.TEMPERATURE.value: [25.0],
+                    WeatherColumns.GHI.value: [500.0],
+                    WeatherColumns.DNI.value: [700.0],
+                    WeatherColumns.DHI.value: [200.0],
+                    WeatherColumns.TEMPERATURE.value: [25.0],
                 }
             )
 

@@ -81,8 +81,9 @@ async def create_solar_system():
         )
         price_provider = cfg.create_provider()
 
-        # Test if CAISO provider can actually get data using same datetime objects
-        test_data = price_provider.get_price_data(analysis_start, analysis_end)
+        # Test if provider can actually get data using same datetime objects
+        price_provider.set_range(analysis_start, analysis_end)
+        test_data = await price_provider.get_data()
 
         if test_data.empty:
             raise Exception("Selected provider returned no data")
@@ -107,7 +108,10 @@ async def create_solar_system():
 
     # Load solar farm configuration (10 MW system)
     config_path = (
-        Path(__file__).parent.parent / "tests" / "config" / "10mw_solar_farm.json"
+        Path(__file__).parent.parent
+        / "tests"
+        / "config"
+        / "solar_farm_10mw_pv_only.json"
     )
     with open(config_path, "r") as f:
         pv_config = json.load(f)

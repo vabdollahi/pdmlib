@@ -9,11 +9,11 @@ from datetime import datetime
 from typing import Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.simulation.price_provider import (
     BasePriceProvider,
-    ElectricityDataColumns,
+    PriceColumns,
 )
 from app.core.simulation.pv_model import PVModel
 from app.core.utils.logging import get_logger
@@ -24,7 +24,7 @@ logger = get_logger("solar_revenue")
 class SolarRevenueResult(BaseModel):
     """Results from solar revenue calculation."""
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     total_generation_mwh: float = Field(description="Total solar generation in MWh")
     total_revenue_usd: float = Field(description="Total revenue in USD")
@@ -66,37 +66,34 @@ class SolarRevenueCalculator:
         logger.info("Initialized solar revenue calculator")
 
     async def calculate_revenue(
-        self, start_time=None, end_time=None
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> SolarRevenueResult:
         """
-        Calculate solar revenue using real LMP prices.
+        Calculate solar revenue from PV generation and electricity prices.
 
         Args:
-            start_time: Start datetime for calculation (optional)
-            end_time: End datetime for calculation (optional)
+            start_time: Optional start time for price data
+            end_time: Optional end time for price data
 
         Returns:
-            SolarRevenueResult with detailed revenue analysis
+            SolarRevenueResult with revenue calculations
         """
         logger.info("Starting solar revenue calculation")
 
         # Get LMP price data
         logger.info("Fetching LMP data")
         if start_time and end_time:
-            price_data = self.price_provider.get_price_data(start_time, end_time)
+            self.price_provider.set_range(start_time, end_time)
+            price_data = await self.price_provider.get_data()
         else:
             # For backward compatibility, try to get data from the provider's cache
             # This assumes the provider has been configured with dates already
-            if hasattr(self.price_provider, "_fetch_range"):
-                # For CAISO provider, try to use cached data or default dates
-                from datetime import datetime
-
-                default_start = datetime(2025, 7, 15)
-                default_end = datetime(2025, 7, 16)
-                price_data = self.price_provider.get_price_data(
-                    default_start, default_end
-                )
-            else:
+            try:
+                price_data = await self.price_provider.get_data()
+            except Exception as e:
+                logger.warning(f"Could not get price data: {e}")
                 price_data = pd.DataFrame()
 
         if len(price_data) == 0:
@@ -120,7 +117,7 @@ class SolarRevenueCalculator:
 
         if len(generation_data) == 0:
             logger.warning("No solar generation data available")
-            price_col = ElectricityDataColumns.PRICE_DOLLAR_MWH.value
+            price_col = PriceColumns.PRICE_DOLLAR_MWH.value
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
                 total_revenue_usd=0.0,
@@ -139,7 +136,7 @@ class SolarRevenueCalculator:
 
         if len(combined_data) == 0:
             logger.warning("No overlapping data between prices and generation")
-            price_col = ElectricityDataColumns.PRICE_DOLLAR_MWH.value
+            price_col = PriceColumns.PRICE_DOLLAR_MWH.value
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
                 total_revenue_usd=0.0,
@@ -204,7 +201,7 @@ class SolarRevenueCalculator:
 
         # Convert power to MW if needed (assuming input might be in W)
         combined["generation_mw"] = combined[power_col] / 1000.0
-        price_col = ElectricityDataColumns.PRICE_DOLLAR_MWH.value
+        price_col = PriceColumns.PRICE_DOLLAR_MWH.value
         combined["lmp_usd_mwh"] = combined[price_col]
 
         # Calculate hourly revenue: LMP ($/MWh) × Generation (MW) × 1 hour

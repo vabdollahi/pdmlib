@@ -170,6 +170,19 @@ class SolarBatteryPlant(BaseModel):
             f"{len(self.batteries)} batteries"
         )
 
+    def __hash__(self):
+        """Make plant hashable by using its name and plant_id."""
+        return hash((self.config.name, self.config.plant_id))
+
+    def __eq__(self, other):
+        """Define equality based on config name and plant_id."""
+        if not isinstance(other, SolarBatteryPlant):
+            return False
+        return (self.config.name, self.config.plant_id) == (
+            other.config.name,
+            other.config.plant_id,
+        )
+
     @property
     def operation_mode(self) -> PlantOperationMode:
         """Current plant operation mode."""
