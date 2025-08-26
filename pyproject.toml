@@ -28,7 +28,8 @@ dev = [
 
 [tool.taskipy.tasks]
 start = "python -m app.main"
-test = "pytest app tests"
+test = "pytest tests"
+test-verbose = "pytest tests -v --tb=short"
 lint = "ruff check app tests"
 lint-fix = "ruff format app tests && ruff check app tests --fix"
 

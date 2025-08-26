@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -20,6 +20,9 @@ from app.core.simulation.battery_simulator import LinearBatterySimulator
 from app.core.simulation.pv_model import PVLibResultsColumns, PVModel
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.core.utils.storage import DataStorage
 
 logger = get_logger("plant")
 
@@ -161,10 +164,29 @@ class SolarBatteryPlant(BaseModel):
     # Plant state
     _operation_mode: PlantOperationMode = PlantOperationMode.IDLE
     _current_timestamp: Optional[datetime.datetime] = None
+    pv_cache_enabled: bool = Field(default=True, exclude=True)
 
     def __init__(self, **data):
         """Initialize plant with validation."""
         super().__init__(**data)
+
+        # Enable PV caching by default with standard data storage
+        if self.pv_cache_enabled:
+            try:
+                from app.core.utils.storage import DataStorage
+
+                default_storage = DataStorage(base_path="data")
+                organization = getattr(self.config, "organization", "SolarRevenue")
+                asset = self.config.name or self.config.plant_id or "unnamed_plant"
+
+                self.pv_model.enable_caching(
+                    storage=default_storage, organization=organization, asset=asset
+                )
+                logger.info(f"PV caching auto-enabled for plant '{self.config.name}'")
+            except Exception as e:
+                logger.warning(f"Could not auto-enable PV caching: {e}")
+                self.pv_cache_enabled = False
+
         logger.info(
             f"Initialized solar-battery plant '{self.config.name}' with "
             f"{len(self.batteries)} batteries"
@@ -214,19 +236,49 @@ class SolarBatteryPlant(BaseModel):
         )
         return weighted_soc / total_capacity
 
-    async def get_pv_generation_potential(self, timestamp: datetime.datetime) -> float:
+    def enable_pv_caching(self, storage: "DataStorage") -> None:
+        """
+        Enable PV generation caching for this plant.
+
+        Args:
+            storage: DataStorage instance for caching
+        """
+        organization = getattr(self.config, "organization", "default")
+        asset = self.config.name or self.config.plant_id or "unnamed_plant"
+
+        self.pv_model.enable_caching(
+            storage=storage, organization=organization, asset=asset
+        )
+        self.pv_cache_enabled = True
+        logger.info(f"PV caching enabled for plant '{self.config.name}'")
+
+    def disable_pv_caching(self) -> None:
+        """Disable PV generation caching for this plant."""
+        self.pv_model.disable_caching()
+        self.pv_cache_enabled = False
+        logger.info(f"PV caching disabled for plant '{self.config.name}'")
+
+    @property
+    def is_pv_caching_enabled(self) -> bool:
+        """Check if PV caching is enabled."""
+        return self.pv_cache_enabled
+
+    async def get_pv_generation_potential(
+        self, timestamp: datetime.datetime, force_refresh: bool = False
+    ) -> float:
         """
         Get PV generation potential at given timestamp.
 
         Args:
             timestamp: Time for generation calculation
+            force_refresh: If True, bypass cache and run fresh simulation
 
         Returns:
             PV generation potential in MW
         """
         try:
-            # Run PV simulation to get generation data
-            pv_results = await self.pv_model.run_simulation()
+            # Run PV simulation to get generation data (with caching support)
+            pv_results = await self.pv_model.run_simulation(force_refresh=force_refresh)
 
             # Find the closest timestamp
             if timestamp in pv_results.index:

@@ -5,7 +5,7 @@ This module provides the PVModel class that combines PVLib configurations
 with weather data to run solar power simulations.
 """
 
-from typing import Dict
+from typing import TYPE_CHECKING, Dict, Optional
 
 import pandas as pd
 from pvlib import modelchain
@@ -14,6 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.simulation.pvlib_models import PVLibModel, PVLibResultsColumns
 from app.core.simulation.weather_provider import WeatherProviderProtocol
 from app.core.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.core.simulation.pv_generation_provider import PVGenerationProvider
+    from app.core.utils.storage import DataStorage
+
+from app.core.utils.date_handling import TimeInterval
 
 logger = get_logger("pv_model")
 
@@ -46,14 +52,114 @@ class PVModel(BaseModel):
 
         return self
 
-    async def run_simulation(self) -> pd.DataFrame:
+    def __init__(self, **data):
+        """Initialize PV model with optional caching support."""
+        super().__init__(**data)
+        # Non-Pydantic field for caching provider
+        self._cached_provider: Optional["PVGenerationProvider"] = None
+
+        # Try to enable caching by default if we have the necessary information
+        try:
+            has_org = hasattr(self.weather_provider, "organization")
+            has_asset = hasattr(self.weather_provider, "asset")
+            if has_org and has_asset:
+                from app.core.utils.storage import DataStorage
+
+                default_storage = DataStorage(base_path="data")
+
+                organization = getattr(
+                    self.weather_provider, "organization", "SolarRevenue"
+                )
+                # Use weather provider asset as fallback, or create PV-specific name
+                weather_asset = getattr(self.weather_provider, "asset", "Weather")
+                asset = (
+                    f"PV_{weather_asset}"
+                    if weather_asset == "Weather"
+                    else weather_asset
+                )
+
+                self.enable_caching(
+                    storage=default_storage, organization=organization, asset=asset
+                )
+                logger.info(f"PV caching auto-enabled for {organization}/{asset}")
+        except Exception as e:
+            logger.debug(f"Could not auto-enable PV caching: {e}")
+            # This is fine - caching can be enabled manually later
+
+    def enable_caching(
+        self, storage: "DataStorage", organization: str, asset: str
+    ) -> None:
+        """
+        Enable caching for this PV model.
+
+        Args:
+            storage: DataStorage instance for caching
+            organization: Organization name for cache hierarchy
+            asset: Asset name for cache hierarchy
+        """
+        # Import here to avoid circular import
+        from app.core.simulation.pv_generation_provider import PVGenerationProvider
+
+        # Get interval with fallback
+        interval = getattr(self.weather_provider, "interval", None)
+        if interval is None:
+            interval = TimeInterval.HOURLY
+
+        # Create cached provider using weather provider's location and dates
+        self._cached_provider = PVGenerationProvider(
+            location=self.weather_provider.location,  # type: ignore
+            start_date=getattr(self.weather_provider, "start_date", "2024-01-01"),
+            end_date=getattr(self.weather_provider, "end_date", "2024-12-31"),
+            organization=organization,
+            asset=asset,
+            data_type="pv_generation",
+            interval=interval,
+            storage=storage,
+            pv_model=self,
+        )
+        logger.info(f"PV caching enabled for {organization}/{asset}")
+
+    def disable_caching(self) -> None:
+        """Disable caching for this PV model."""
+        self._cached_provider = None
+        logger.info("PV caching disabled")
+
+    @property
+    def is_caching_enabled(self) -> bool:
+        """Check if caching is enabled."""
+        return self._cached_provider is not None
+
+    async def run_simulation(self, force_refresh: bool = False) -> pd.DataFrame:
         """
         Run the PVLib model with the provided weather data.
+
+        Args:
+            force_refresh: If True, bypass cache and run fresh simulation
 
         Returns:
             pd.DataFrame: Results of the PVLib model simulation.
         """
-        logger.info("Starting PV simulation")
+        # Use cached provider if available
+        if self._cached_provider and not force_refresh:
+            logger.info("Using cached PV generation data")
+            return await self._cached_provider.get_data(force_refresh=False)
+        elif self._cached_provider and force_refresh:
+            logger.info("Force refresh requested, bypassing cache")
+            return await self._cached_provider.get_data(force_refresh=True)
+        else:
+            # Run simulation without caching
+            return await self._run_simulation_uncached()
+
+    async def _run_simulation_uncached(self) -> pd.DataFrame:
+        """
+        Run the PVLib simulation without caching.
+
+        This is the original simulation logic, separated for clarity.
+
+        Returns:
+            pd.DataFrame: Results of the PVLib model simulation.
+        """
+        logger.info("Starting PV simulation (uncached)")
 
         # Create PVLib model chain
         model_chain = self.pv_config.create()
