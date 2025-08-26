@@ -17,8 +17,6 @@ using PVLib radiation decomposition models for API cost optimization.
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
@@ -63,26 +61,17 @@ class WeatherDataColumns(str, Enum):
 
 @runtime_checkable
 class WeatherProviderProtocol(Protocol):
-    """Protocol for weather data providers with both async and sync interfaces."""
+    """Protocol for weather data providers.
+
+    Single, canonical async method get_data() must be implemented.
+    """
 
     async def get_data(self, force_refresh: bool = False) -> pd.DataFrame: ...
 
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame: ...
-
     def validate_data_format(self, df: pd.DataFrame) -> bool: ...
 
 
-@runtime_checkable
-class SyncWeatherProviderProtocol(Protocol):
-    """Protocol for sync-only weather data providers."""
-
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame: ...
-
-    def validate_data_format(self, df: pd.DataFrame) -> bool: ...
+## Removed SyncWeatherProviderProtocol: async-only providers are supported.
 
 
 class BaseWeatherProvider:
@@ -99,46 +88,14 @@ class BaseWeatherProvider:
     def __init__(self, location: GeospatialLocation, **kwargs):
         """Initialize with location for solar position calculations."""
         self.location = location
+        # Optional range hint for providers that support local filtering
+        self._range_start: Optional[datetime] = None
+        self._range_end: Optional[datetime] = None
 
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame:
-        """
-        Synchronous bridge that updates the provider's date range and
-        invokes async `get_data()` using asyncio.run, with support for
-        already-running event loops.
-        """
-        # Update date range for providers that also extend BaseProvider
-        try:
-            self.start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
-            self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-        async def _run() -> pd.DataFrame:
-            try:
-                get_data = getattr(self, "get_data", None)
-                if get_data is None:
-                    logger.warning("Provider has no get_data(); returning empty DF")
-                    return pd.DataFrame()
-                return await get_data()  # type: ignore[misc]
-            except Exception as e:
-                logger.error(f"Error fetching weather data via async bridge: {e}")
-                return pd.DataFrame()
-
-        try:
-            try:
-                asyncio.get_running_loop()
-                # In running loop: offload to thread
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, _run())
-                    return future.result()
-            except RuntimeError:
-                # No running loop
-                return asyncio.run(_run())
-        except Exception as e:
-            logger.error(f"Failed to fetch weather data: {e}")
-            return pd.DataFrame()
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
+        """Optionally hint a time range for subsequent get_data() calls."""
+        self._range_start = start_time
+        self._range_end = end_time
 
     def calculate_radiation_components(self, weather_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -243,10 +200,21 @@ class CSVWeatherProvider(BaseWeatherProvider):
         super().__init__(location=location, **kwargs)
         self.file_path = file_path
 
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame:
-        """Read weather data from CSV file and filter by date range."""
+    # Removed sync get_weather_data; async-only interface below.
+
+    async def get_data(
+        self, force_refresh: bool = False
+    ) -> pd.DataFrame:  # pragma: no cover - thin async bridge
+        """Async interface delegating to get_weather_data.
+
+        If callers previously set a date range via BaseWeatherProvider.get_weather_data,
+        use that range. Otherwise, return the entire file by querying an intentionally
+        wide window that captures all rows.
+        """
+        # Determine desired range using optional hints
+        start = self._range_start or datetime(1900, 1, 1)
+        end = self._range_end or datetime(2100, 1, 1)
+
         try:
             # Read CSV file
             df = pd.read_csv(self.file_path)
@@ -265,8 +233,8 @@ class CSVWeatherProvider(BaseWeatherProvider):
                 df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
                 df.set_index(df.columns[0], inplace=True)
 
-            # Filter by date range
-            mask = (df.index >= start_time) & (df.index <= end_time)
+            # Filter by date range (if any was set)
+            mask = (df.index >= start) & (df.index <= end)
             filtered_df = df[mask].copy()
 
             # Standardize column names if needed

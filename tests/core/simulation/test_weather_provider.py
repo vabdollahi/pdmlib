@@ -253,7 +253,8 @@ def test_openmeteo_client_fetches_all_radiation_when_requested(
 @patch("app.core.simulation.open_meteo_data.requests.get")
 @patch("pvlib.irradiance")
 @patch("pvlib.location")
-def test_openmeteo_provider_full_workflow_with_decomposition(
+@pytest.mark.asyncio
+async def test_openmeteo_provider_full_workflow_with_decomposition(
     mock_pvlib_location,
     mock_irradiance,
     mock_get,
@@ -293,10 +294,9 @@ def test_openmeteo_provider_full_workflow_with_decomposition(
         storage=mock_storage,
     )
 
-    # Get weather data using sync interface
-    result = provider.get_weather_data(
-        start_time=datetime(2025, 1, 1), end_time=datetime(2025, 1, 2)
-    )
+    # Get weather data using async interface
+    provider.set_range(datetime(2025, 1, 1), datetime(2025, 1, 2))
+    result = await provider.get_data()  # type: ignore[attr-defined]
 
     # Verify we got complete radiation data from GHI-only API call
     assert not result.empty
@@ -440,12 +440,13 @@ class TestCSVWeatherProvider:
         assert provider.file_path == str(sample_csv_path)
         assert provider.location == sample_location
 
-    def test_get_weather_data_success(self, csv_provider: CSVWeatherProvider):
+    @pytest.mark.asyncio
+    async def test_get_weather_data_success(self, csv_provider: CSVWeatherProvider):
         """Test getting weather data from CSV file."""
         start_time = datetime(2025, 7, 15, 0, 0, 0)
         end_time = datetime(2025, 7, 15, 23, 59, 59)
-
-        data = csv_provider.get_weather_data(start_time, end_time)
+        csv_provider.set_range(start_time, end_time)
+        data = await csv_provider.get_data()
 
         assert not data.empty
         assert WeatherDataColumns.GHI.value in data.columns
@@ -454,26 +455,30 @@ class TestCSVWeatherProvider:
         assert WeatherDataColumns.DHI.value in data.columns
         assert len(data) == 24  # 24 hours of data
 
-    def test_get_weather_data_partial_timerange(self, csv_provider: CSVWeatherProvider):
+    @pytest.mark.asyncio
+    async def test_get_weather_data_partial_timerange(
+        self, csv_provider: CSVWeatherProvider
+    ):
         """Test getting weather data for a partial time range."""
         start_time = datetime(2025, 7, 15, 10, 0, 0)
         end_time = datetime(2025, 7, 15, 14, 0, 0)
-
-        data = csv_provider.get_weather_data(start_time, end_time)
+        csv_provider.set_range(start_time, end_time)
+        data = await csv_provider.get_data()
 
         assert not data.empty
         assert len(data) == 5  # 10:00, 11:00, 12:00, 13:00, 14:00
         # Check that we get expected GHI values for midday hours
         assert data[WeatherDataColumns.GHI.value].max() > 700
 
-    def test_ghi_only_csv_with_radiation_decomposition(
+    @pytest.mark.asyncio
+    async def test_ghi_only_csv_with_radiation_decomposition(
         self, ghi_only_csv_provider: CSVWeatherProvider
     ):
         """Test CSV provider with only GHI data - decompose radiation components."""
         start_time = datetime(2025, 7, 15, 6, 0, 0)
         end_time = datetime(2025, 7, 15, 18, 0, 0)
-
-        data = ghi_only_csv_provider.get_weather_data(start_time, end_time)
+        ghi_only_csv_provider.set_range(start_time, end_time)
+        data = await ghi_only_csv_provider.get_data()
 
         assert not data.empty
         assert WeatherDataColumns.GHI.value in data.columns
@@ -488,7 +493,10 @@ class TestCSVWeatherProvider:
         assert noon_row[WeatherDataColumns.DNI.value].iloc[0] > 0
         assert noon_row[WeatherDataColumns.DHI.value].iloc[0] > 0
 
-    def test_csv_provider_with_missing_file(self, sample_location: GeospatialLocation):
+    @pytest.mark.asyncio
+    async def test_csv_provider_with_missing_file(
+        self, sample_location: GeospatialLocation
+    ):
         """Test CSV provider behavior with non-existent file."""
         nonexistent_path = "/nonexistent/path/weather.csv"
         provider = CSVWeatherProvider(
@@ -497,11 +505,14 @@ class TestCSVWeatherProvider:
 
         start_time = datetime(2025, 7, 15, 0, 0, 0)
         end_time = datetime(2025, 7, 15, 23, 59, 59)
-
-        data = provider.get_weather_data(start_time, end_time)
+        provider.set_range(start_time, end_time)
+        data = await provider.get_data()
         assert data.empty
 
-    def test_csv_provider_calls_radiation_decomposition(self, ghi_only_csv_provider):
+    @pytest.mark.asyncio
+    async def test_csv_provider_calls_radiation_decomposition(
+        self, ghi_only_csv_provider
+    ):
         """Test that CSV provider calls radiation decomposition for GHI-only data."""
         # Mock the calculate_radiation_components method
         with patch.object(
@@ -519,13 +530,15 @@ class TestCSVWeatherProvider:
             start_time = datetime(2025, 7, 15, 12, 0, 0)
             end_time = datetime(2025, 7, 15, 12, 0, 0)
 
-            data = ghi_only_csv_provider.get_weather_data(start_time, end_time)
+            ghi_only_csv_provider.set_range(start_time, end_time)
+            data = await ghi_only_csv_provider.get_data()
 
             # Should call radiation decomposition
             mock_calculate.assert_called_once()
             assert not data.empty
 
-    def test_csv_provider_validates_required_columns(
+    @pytest.mark.asyncio
+    async def test_csv_provider_validates_required_columns(
         self, tmp_path, sample_location: GeospatialLocation
     ):
         """Test CSV provider behavior with missing required columns."""
@@ -538,8 +551,8 @@ class TestCSVWeatherProvider:
         )
         start_time = datetime(2025, 7, 15, 0, 0, 0)
         end_time = datetime(2025, 7, 15, 23, 59, 59)
-
-        data = provider.get_weather_data(start_time, end_time)
+        provider.set_range(start_time, end_time)
+        data = await provider.get_data()
         # Should still load the data but with warning about missing radiation components
         assert not data.empty
         assert "some_other_column" in data.columns
