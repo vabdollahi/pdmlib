@@ -18,7 +18,7 @@ from app.core.simulation.ieso_data import IESOPriceProvider
 from app.core.simulation.price_provider import (
     BasePriceProvider,
     CSVPriceProvider,
-    ElectricityDataColumns,
+    PriceColumns,
     create_price_provider,
 )
 from app.core.utils.location import GeospatialLocation
@@ -32,7 +32,7 @@ class TestBasePriceProvider:
 
         # Create a concrete implementation for testing
         class TestProvider(BasePriceProvider):
-            def get_price_data(self, start_time, end_time):
+            async def get_data(self):
                 return pd.DataFrame()
 
             def validate_data_format(self, df):
@@ -82,15 +82,17 @@ class TestCSVPriceProvider:
         assert provider.csv_file_path == sample_csv_path
         assert provider._data_cache is None
 
-    def test_get_price_data_success(self, csv_provider: CSVPriceProvider):
+    @pytest.mark.asyncio
+    async def test_get_data_success(self, csv_provider: CSVPriceProvider):
         """Test getting price data from CSV file."""
         start_time = datetime(2025, 7, 15, 0, 0, 0)
         end_time = datetime(2025, 7, 15, 23, 59, 59)
 
-        data = csv_provider.get_price_data(start_time, end_time)
+        csv_provider.set_range(start_time, end_time)
+        data = await csv_provider.get_data()
 
         assert not data.empty
-        assert ElectricityDataColumns.PRICE_DOLLAR_MWH.value in data.columns
+        assert PriceColumns.PRICE_DOLLAR_MWH.value in data.columns
         assert len(data) == 24  # 24 hours of data
 
 

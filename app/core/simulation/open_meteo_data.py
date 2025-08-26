@@ -15,7 +15,7 @@ import pandas as pd
 import requests
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.core.simulation.weather_provider import BaseWeatherProvider, WeatherDataColumns
+from app.core.simulation.weather_provider import BaseWeatherProvider, WeatherColumns
 from app.core.utils.caching import BaseProvider
 from app.core.utils.date_handling import TimeInterval, parse_date_string
 from app.core.utils.location import GeospatialLocation
@@ -90,16 +90,16 @@ class OpenMeteoClient:
             # Select variables based on optimization setting
             if fetch_all_radiation:
                 variables = [
-                    WeatherDataColumns.OPENMETEO_GHI.value,
-                    WeatherDataColumns.OPENMETEO_DNI.value,
-                    WeatherDataColumns.OPENMETEO_DHI.value,
-                    WeatherDataColumns.OPENMETEO_TEMP.value,
+                    WeatherColumns.OPENMETEO_GHI.value,
+                    WeatherColumns.OPENMETEO_DNI.value,
+                    WeatherColumns.OPENMETEO_DHI.value,
+                    WeatherColumns.OPENMETEO_TEMP.value,
                 ]
                 logger.info("Fetching all radiation components from OpenMeteo API")
             else:
                 variables = [
-                    WeatherDataColumns.OPENMETEO_GHI.value,
-                    WeatherDataColumns.OPENMETEO_TEMP.value,
+                    WeatherColumns.OPENMETEO_GHI.value,
+                    WeatherColumns.OPENMETEO_TEMP.value,
                 ]
                 logger.info(
                     "Fetching optimized variables (GHI + temperature) "
@@ -142,12 +142,10 @@ class OpenMeteoClient:
 
             # Add weather variables with standardized names
             variable_mapping = {
-                WeatherDataColumns.OPENMETEO_GHI.value: WeatherDataColumns.GHI.value,
-                WeatherDataColumns.OPENMETEO_DNI.value: WeatherDataColumns.DNI.value,
-                WeatherDataColumns.OPENMETEO_DHI.value: WeatherDataColumns.DHI.value,
-                WeatherDataColumns.OPENMETEO_TEMP.value: (
-                    WeatherDataColumns.TEMPERATURE.value
-                ),
+                WeatherColumns.OPENMETEO_GHI.value: WeatherColumns.GHI.value,
+                WeatherColumns.OPENMETEO_DNI.value: WeatherColumns.DNI.value,
+                WeatherColumns.OPENMETEO_DHI.value: WeatherColumns.DHI.value,
+                WeatherColumns.OPENMETEO_TEMP.value: (WeatherColumns.TEMPERATURE.value),
             }
 
             for api_var, std_var in variable_mapping.items():
@@ -281,8 +279,8 @@ class OpenMeteoWeatherProvider(BaseProvider, BaseWeatherProvider):
             # Log optimization information
             if not self.fetch_all_radiation:
                 has_decomposed = (
-                    WeatherDataColumns.DNI in enhanced_df.columns
-                    and WeatherDataColumns.DHI in enhanced_df.columns
+                    WeatherColumns.DNI in enhanced_df.columns
+                    and WeatherColumns.DHI in enhanced_df.columns
                 )
                 if has_decomposed:
                     logger.info(

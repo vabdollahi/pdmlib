@@ -2,7 +2,7 @@
 Shared price provider primitives and facade.
 
 This module defines:
-- ElectricityDataColumns: unified column names for price data
+- PriceColumns: unified column names for price data
 - BasePriceProvider: common provider interface + sync bridge and standardization
 - CSVPriceProvider: generic CSV-backed provider
 - create_price_provider: factory that routes to CAISO/IESO/CSV
@@ -36,7 +36,7 @@ logger = get_logger("price_provider")
 # -----------------------------------------------------------------------------
 
 
-class ElectricityDataColumns(Enum):
+class PriceColumns(Enum):
     """Standard column names for electricity pricing data."""
 
     TIMESTAMP = "timestamp"
@@ -50,9 +50,8 @@ class ElectricityDataColumns(Enum):
 
 @runtime_checkable
 class PriceProviderProtocol(Protocol):
-    def get_price_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame: ...
+    async def get_data(self) -> pd.DataFrame: ...
+    def set_range(self, start_time: datetime, end_time: datetime) -> None: ...
     def validate_data_format(self, df: pd.DataFrame) -> bool: ...
 
 
@@ -62,53 +61,31 @@ class BasePriceProvider:
 
     Providers typically also inherit from app.core.utils.caching.BaseProvider to
     gain async cache-first `get_data()` and range fetching. This base class
-    offers a default sync bridge for get_price_data and column standardization.
+    offers date range management and column standardization.
     """
 
-    # --- Public API ---------------------------------------------------------
-    def get_price_data(self, start_time: datetime, end_time: datetime) -> pd.DataFrame:
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
         """
-        Default synchronous bridge that updates the provider's date range and
-        invokes async `get_data()` using asyncio.run, with support for already-
-        running event loops (e.g., inside pytest-asyncio) by offloading to a
-        thread.
+        Set the date range for data retrieval.
+
+        Providers that extend BaseProvider should set start_date/end_date attributes
+        for cache-first async get_data() operations.
         """
-        # Providers that also extend BaseProvider expose start_date/end_date
         try:
             self.start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
             self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
-        except Exception:  # best-effort; still try to call get_data
-            pass
-
-        import asyncio
-        import concurrent.futures
-
-        async def _run() -> pd.DataFrame:
-            try:
-                get_data = getattr(self, "get_data", None)
-                if get_data is None:
-                    logger.warning("Provider has no get_data(); returning empty DF")
-                    return pd.DataFrame()
-                return await get_data()  # type: ignore[misc]
-            except Exception as e:
-                logger.error(f"Error fetching price data via async bridge: {e}")
-                return pd.DataFrame()
-
-        try:
-            try:
-                asyncio.get_running_loop()
-                # In running loop: offload a one-shot asyncio.run to a thread
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    # Defer coroutine creation to the worker thread to avoid
-                    # un-awaited coroutine warnings on submission failures.
-                    future = executor.submit(lambda: asyncio.run(_run()))
-                    return future.result()
-            except RuntimeError:
-                # No running loop
-                return asyncio.run(_run())
         except Exception as e:
-            logger.error(f"Error getting price data: {e}")
-            return pd.DataFrame()
+            logger.warning(f"Could not set date range: {e}")
+
+    async def get_data(self) -> pd.DataFrame:
+        """
+        Async data retrieval method.
+
+        This base implementation returns empty DataFrame. Providers should
+        override this method or inherit from BaseProvider for caching.
+        """
+        logger.warning("Base get_data() called; returning empty DataFrame")
+        return pd.DataFrame()
 
     def validate_data_format(self, df: pd.DataFrame) -> bool:  # pragma: no cover
         """Generic validation: require timestamp and price when non-empty.
@@ -118,10 +95,10 @@ class BasePriceProvider:
         """
         if df.empty:
             return True
-        ts_ok = ElectricityDataColumns.TIMESTAMP.value in df.columns or isinstance(
+        ts_ok = PriceColumns.TIMESTAMP.value in df.columns or isinstance(
             df.index, pd.DatetimeIndex
         )
-        price_ok = ElectricityDataColumns.PRICE_DOLLAR_MWH.value in df.columns
+        price_ok = PriceColumns.PRICE_DOLLAR_MWH.value in df.columns
         return bool(ts_ok and price_ok)
 
     # --- Helpers ------------------------------------------------------------
@@ -140,20 +117,18 @@ class BasePriceProvider:
         # Normalize timestamp column name
         ts_aliases = ["timestamp", "datetime", "date_time", "time", "TIMESTAMP"]
         ts_col = next((c for c in ts_aliases if c in result.columns), None)
-        if ts_col and ts_col != ElectricityDataColumns.TIMESTAMP.value:
-            result = result.rename(
-                columns={ts_col: ElectricityDataColumns.TIMESTAMP.value}
-            )
+        if ts_col and ts_col != PriceColumns.TIMESTAMP.value:
+            result = result.rename(columns={ts_col: PriceColumns.TIMESTAMP.value})
 
         # Ensure timestamp is datetime when present
-        if ElectricityDataColumns.TIMESTAMP.value in result.columns:
-            result[ElectricityDataColumns.TIMESTAMP.value] = pd.to_datetime(
-                result[ElectricityDataColumns.TIMESTAMP.value], errors="coerce"
+        if PriceColumns.TIMESTAMP.value in result.columns:
+            result[PriceColumns.TIMESTAMP.value] = pd.to_datetime(
+                result[PriceColumns.TIMESTAMP.value], errors="coerce"
             )
 
         # Normalize price
         price_targets = [
-            ElectricityDataColumns.PRICE_DOLLAR_MWH.value,
+            PriceColumns.PRICE_DOLLAR_MWH.value,
             "price",
             "price_mwh",
             "lmp",
@@ -163,10 +138,10 @@ class BasePriceProvider:
             "MW",
             "hoep_cad_mwh",
         ]
-        if ElectricityDataColumns.PRICE_DOLLAR_MWH.value not in result.columns:
+        if PriceColumns.PRICE_DOLLAR_MWH.value not in result.columns:
             src = next((c for c in price_targets if c in result.columns), None)
             if src:
-                result[ElectricityDataColumns.PRICE_DOLLAR_MWH.value] = pd.to_numeric(
+                result[PriceColumns.PRICE_DOLLAR_MWH.value] = pd.to_numeric(
                     result[src], errors="coerce"
                 )
 
@@ -185,8 +160,13 @@ class CSVPriceProvider(BasePriceProvider):
         self.csv_file_path = Path(csv_file_path)
         self._data_cache: Optional[pd.DataFrame] = None
 
-    def get_price_data(self, start_time: datetime, end_time: datetime) -> pd.DataFrame:
-        # For CSV we don't need async; just load and filter
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
+        """Set date range for filtering."""
+        self.start_time = start_time
+        self.end_time = end_time
+
+    async def get_data(self) -> pd.DataFrame:
+        """Get price data for the set date range."""
         try:
             if self._data_cache is None:
                 self._data_cache = self._load_csv_data()
@@ -197,14 +177,18 @@ class CSVPriceProvider(BasePriceProvider):
 
             if not isinstance(df.index, pd.DatetimeIndex):
                 # Ensure index is timestamp for efficient slicing
-                if ElectricityDataColumns.TIMESTAMP.value in df.columns:
-                    df = df.set_index(ElectricityDataColumns.TIMESTAMP.value)
+                if PriceColumns.TIMESTAMP.value in df.columns:
+                    df = df.set_index(PriceColumns.TIMESTAMP.value)
                 else:
-                    logger.error("CSV missing timestamp column for indexing")
-                    return pd.DataFrame()
+                    logger.warning("No timestamp column found for CSV filtering")
+                    return df
 
-            # Filter inclusive using label-based slicing
-            return df.loc[start_time:end_time].copy()
+            # Filter by date range if set_range was called
+            if hasattr(self, "start_time") and hasattr(self, "end_time"):
+                mask = (df.index >= self.start_time) & (df.index <= self.end_time)
+                return df[mask].reset_index()
+
+            return df.reset_index()
         except Exception as e:
             logger.error(f"CSV provider error: {e}")
             return pd.DataFrame()
@@ -218,12 +202,12 @@ class CSVPriceProvider(BasePriceProvider):
             if not self.validate_data_format(df):
                 raise ValueError("CSV file does not have expected format")
             # Sort and index by timestamp
-            if ElectricityDataColumns.TIMESTAMP.value in df.columns:
-                df = df.sort_values(ElectricityDataColumns.TIMESTAMP.value)
-                df[ElectricityDataColumns.TIMESTAMP.value] = pd.to_datetime(
-                    df[ElectricityDataColumns.TIMESTAMP.value]
+            if PriceColumns.TIMESTAMP.value in df.columns:
+                df = df.sort_values(PriceColumns.TIMESTAMP.value)
+                df[PriceColumns.TIMESTAMP.value] = pd.to_datetime(
+                    df[PriceColumns.TIMESTAMP.value]
                 )
-                df = df.set_index(ElectricityDataColumns.TIMESTAMP.value)
+                df = df.set_index(PriceColumns.TIMESTAMP.value)
             return df
         except Exception as e:
             logger.error(f"Failed to load CSV: {e}")
@@ -233,17 +217,15 @@ class CSVPriceProvider(BasePriceProvider):
         if df.empty:
             return True
         cols = df.columns
-        ts_ok = ElectricityDataColumns.TIMESTAMP.value in cols or isinstance(
+        ts_ok = PriceColumns.TIMESTAMP.value in cols or isinstance(
             df.index, pd.DatetimeIndex
         )
-        price_ok = ElectricityDataColumns.PRICE_DOLLAR_MWH.value in cols
+        price_ok = PriceColumns.PRICE_DOLLAR_MWH.value in cols
         if not (ts_ok and price_ok):
             logger.error("CSV missing required columns")
             return False
         try:
-            pd.to_numeric(
-                df[ElectricityDataColumns.PRICE_DOLLAR_MWH.value], errors="raise"
-            )
+            pd.to_numeric(df[PriceColumns.PRICE_DOLLAR_MWH.value], errors="raise")
         except Exception:
             logger.error("CSV price column is not numeric")
             return False
@@ -357,30 +339,29 @@ class PriceProvider(BaseModel):
             raise ValueError(f"Unsupported market region: {self.market_region}")
 
     # --- Public API (delegated) -------------------------------------------------
-    def get_price_data(self, start_time: datetime, end_time: datetime) -> pd.DataFrame:
-        """Delegate price retrieval to the selected provider."""
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
+        """Set date range on the underlying provider."""
+        if not self._provider:
+            logger.error("Underlying provider not initialized")
+            return
+        self._provider.set_range(start_time, end_time)
+
+    async def get_data(self, force_refresh: bool = False) -> pd.DataFrame:
+        """Delegate async data retrieval to underlying provider."""
         if not self._provider:
             logger.error("Underlying provider not initialized")
             return pd.DataFrame()
-        return self._provider.get_price_data(start_time, end_time)
 
-    async def get_data(self, force_refresh: bool = False) -> pd.DataFrame:
-        """Delegate cache-first retrieval if supported by underlying provider."""
-        provider = getattr(self, "_provider", None)
-        if provider is None or not hasattr(provider, "get_data"):
-            logger.warning(
-                "Underlying provider does not support get_data(); using get_price_data"
-            )
-            # As a fallback, use the synchronous bridge method
-            from app.core.utils.date_handling import parse_datetime_input
-
-            start_dt = parse_datetime_input(self.start_date)
-            end_dt = parse_datetime_input(self.end_date)
-            return self.get_price_data(start_dt, end_dt)
-        # Update provider dates to match wrapper in case they changed
-        provider.start_date = self.start_date
-        provider.end_date = self.end_date
-        return await provider.get_data(force_refresh=force_refresh)
+        # For providers that inherit from BaseProvider, pass force_refresh
+        if hasattr(self._provider, "get_data"):
+            get_data_method = getattr(self._provider, "get_data")
+            if "force_refresh" in get_data_method.__code__.co_varnames:
+                return await self._provider.get_data(force_refresh=force_refresh)  # type: ignore[misc]
+            else:
+                return await self._provider.get_data()  # type: ignore[misc]
+        else:
+            logger.warning("Provider does not implement get_data()")
+            return pd.DataFrame()
 
     # --- Introspection helpers -------------------------------------------------
     @property

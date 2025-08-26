@@ -1,0 +1,63 @@
+{
+  "location": {
+    "name": "Test_Solar_Battery_Plant",
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "tz": "America/Los_Angeles",
+    "altitude": 100
+  },
+  "pv_systems": [
+    {
+      "inverters": {
+        "count": 1,
+        "database": "CECInverter", 
+        "record": "SMA_America__SB5000US__240V_"
+      },
+      "pv_arrays": [
+        {
+          "pv_modules": {
+            "count": 20,
+            "name": "Test Solar Module Array",
+            "database": "CECMod",
+            "record": "Canadian_Solar_Inc__CS5P_220M"
+          },
+          "array_setup": {
+            "name": "Test Array - Fixed Mount",
+            "mount": {
+              "type": "fixed_mount",
+              "tilt_degrees": 25.0,
+              "azimuth_degrees": 180.0
+            },
+            "number_of_strings": 10,
+            "temperature_model": {
+              "database": "sapm",
+              "record": "open_rack_glass_glass"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "physical_simulation": {
+    "aoi_model": "physical",
+    "spectral_model": "no_loss"
+  },
+  "batteries": [
+    {
+      "name": "Primary Battery System",
+      "energy_capacity_mwh": 25.0,
+      "max_power_mw": 10.0,
+      "round_trip_efficiency": 0.85,
+      "initial_soc": 0.5,
+      "min_soc": 0.05,
+      "max_soc": 0.95
+    }
+  ],
+  "plant_config": {
+    "name": "Test Solar Farm",
+    "plant_id": "TSF-001",
+    "max_net_power_mw": 15.0,
+    "min_net_power_mw": 0.0,
+    "enable_market_participation": true
+  }
+}

@@ -18,7 +18,7 @@ from typing import Optional
 
 import pandas as pd
 
-from app.core.simulation.price_provider import BasePriceProvider, ElectricityDataColumns
+from app.core.simulation.price_provider import BasePriceProvider, PriceColumns
 from app.core.utils.api_clients import CAISORateLimitedClient
 from app.core.utils.caching import BaseProvider
 from app.core.utils.http_cache import SimpleHTTPCache
@@ -155,42 +155,15 @@ class IESOPriceProvider(BaseProvider, BasePriceProvider):
             **kwargs,
         )
 
-    def get_price_data(self, start_time: datetime, end_time: datetime) -> pd.DataFrame:
-        # Bridge to BaseProvider cache path
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
+        """Set date range for IESO data retrieval."""
         self.start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")
         self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")
-
-        import asyncio
-
-        async def _run():
-            try:
-                return await self.get_data()
-            except Exception as e:
-                logger.error(f"IESO provider error: {e}")
-                return pd.DataFrame()
-
-        try:
-            try:
-                asyncio.get_running_loop()
-                # If we're already in an async context, run in a worker thread
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    # Create and run coroutine within the worker thread to avoid
-                    # un-awaited coroutine warnings.
-                    future = executor.submit(lambda: asyncio.run(_run()))
-                    return future.result()
-            except RuntimeError:
-                # No running loop, safe to use asyncio.run
-                return asyncio.run(_run())
-        except Exception as e:
-            logger.error(f"Error getting IESO price data: {e}")
-            return pd.DataFrame()
 
     def validate_data_format(self, df: pd.DataFrame) -> bool:
         if df.empty:
             return True
-        has_price = ElectricityDataColumns.PRICE_DOLLAR_MWH.value in df.columns
+        has_price = PriceColumns.PRICE_DOLLAR_MWH.value in df.columns
         return has_price
 
     async def _fetch_range(self, start_date: str, end_date: str) -> pd.DataFrame:
@@ -272,7 +245,7 @@ class IESOPriceProvider(BaseProvider, BasePriceProvider):
 
                     df_converted.append(
                         {
-                            ElectricityDataColumns.TIMESTAMP.value: timestamp,
+                            PriceColumns.TIMESTAMP.value: timestamp,
                             "hoep_cad_mwh": float(row["ZonalPrice"]),
                         }
                     )
@@ -286,7 +259,7 @@ class IESOPriceProvider(BaseProvider, BasePriceProvider):
             result_df = pd.DataFrame(df_converted)
 
             # Remove duplicates (same timestamp)
-            timestamp_col = ElectricityDataColumns.TIMESTAMP.value
+            timestamp_col = PriceColumns.TIMESTAMP.value
             result_df = result_df.drop_duplicates(subset=[timestamp_col])
             result_df = result_df.sort_values(timestamp_col)
 

@@ -2,7 +2,7 @@
 Shared weather provider primitives and facade.
 
 This module defines:
-- WeatherDataColumns: unified column names for weather data
+- WeatherColumns: unified column names for weather data
 - BaseWeatherProvider: common provider interface with radiation decomposition
 - CSVWeatherProvider: generic CSV-backed provider
 - create_weather_provider: factory that routes to OpenMeteo/CSV
@@ -17,8 +17,6 @@ using PVLib radiation decomposition models for API cost optimization.
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
@@ -40,7 +38,7 @@ logger = get_logger("weather_provider")
 # -----------------------------------------------------------------------------
 
 
-class WeatherDataColumns(str, Enum):
+class WeatherColumns(str, Enum):
     """Standardized column names for weather data."""
 
     DATE_TIME = "date_time"
@@ -63,26 +61,17 @@ class WeatherDataColumns(str, Enum):
 
 @runtime_checkable
 class WeatherProviderProtocol(Protocol):
-    """Protocol for weather data providers with both async and sync interfaces."""
+    """Protocol for weather data providers.
+
+    Single, canonical async method get_data() must be implemented.
+    """
 
     async def get_data(self, force_refresh: bool = False) -> pd.DataFrame: ...
 
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame: ...
-
     def validate_data_format(self, df: pd.DataFrame) -> bool: ...
 
 
-@runtime_checkable
-class SyncWeatherProviderProtocol(Protocol):
-    """Protocol for sync-only weather data providers."""
-
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame: ...
-
-    def validate_data_format(self, df: pd.DataFrame) -> bool: ...
+## Removed SyncWeatherProviderProtocol: async-only providers are supported.
 
 
 class BaseWeatherProvider:
@@ -99,46 +88,14 @@ class BaseWeatherProvider:
     def __init__(self, location: GeospatialLocation, **kwargs):
         """Initialize with location for solar position calculations."""
         self.location = location
+        # Optional range hint for providers that support local filtering
+        self._range_start: Optional[datetime] = None
+        self._range_end: Optional[datetime] = None
 
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame:
-        """
-        Synchronous bridge that updates the provider's date range and
-        invokes async `get_data()` using asyncio.run, with support for
-        already-running event loops.
-        """
-        # Update date range for providers that also extend BaseProvider
-        try:
-            self.start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
-            self.end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-        async def _run() -> pd.DataFrame:
-            try:
-                get_data = getattr(self, "get_data", None)
-                if get_data is None:
-                    logger.warning("Provider has no get_data(); returning empty DF")
-                    return pd.DataFrame()
-                return await get_data()  # type: ignore[misc]
-            except Exception as e:
-                logger.error(f"Error fetching weather data via async bridge: {e}")
-                return pd.DataFrame()
-
-        try:
-            try:
-                asyncio.get_running_loop()
-                # In running loop: offload to thread
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, _run())
-                    return future.result()
-            except RuntimeError:
-                # No running loop
-                return asyncio.run(_run())
-        except Exception as e:
-            logger.error(f"Failed to fetch weather data: {e}")
-            return pd.DataFrame()
+    def set_range(self, start_time: datetime, end_time: datetime) -> None:
+        """Optionally hint a time range for subsequent get_data() calls."""
+        self._range_start = start_time
+        self._range_end = end_time
 
     def calculate_radiation_components(self, weather_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -151,9 +108,9 @@ class BaseWeatherProvider:
             return weather_df
 
         # Check what radiation components we have
-        has_ghi = WeatherDataColumns.GHI.value in weather_df.columns
-        has_dni = WeatherDataColumns.DNI.value in weather_df.columns
-        has_dhi = WeatherDataColumns.DHI.value in weather_df.columns
+        has_ghi = WeatherColumns.GHI.value in weather_df.columns
+        has_dni = WeatherColumns.DNI.value in weather_df.columns
+        has_dhi = WeatherColumns.DHI.value in weather_df.columns
 
         # If we have all components, no decomposition needed
         if has_ghi and has_dni and has_dhi:
@@ -192,15 +149,15 @@ class BaseWeatherProvider:
 
         # Use Erbs model to decompose GHI into DNI and DHI
         decomp_result = irradiance.erbs(
-            ghi=weather_df[WeatherDataColumns.GHI.value],
+            ghi=weather_df[WeatherColumns.GHI.value],
             zenith=solar_position["zenith"],
             datetime_or_doy=day_of_year,
         )
 
         # Add calculated DNI and DHI to the DataFrame
         enhanced_df = weather_df.copy()
-        enhanced_df[WeatherDataColumns.DNI.value] = decomp_result["dni"]
-        enhanced_df[WeatherDataColumns.DHI.value] = decomp_result["dhi"]
+        enhanced_df[WeatherColumns.DNI.value] = decomp_result["dni"]
+        enhanced_df[WeatherColumns.DHI.value] = decomp_result["dhi"]
 
         logger.debug(
             f"Decomposed GHI into DNI and DHI for {len(weather_df)} data points"
@@ -210,8 +167,8 @@ class BaseWeatherProvider:
     def validate_data_format(self, df: pd.DataFrame) -> bool:
         """Validate that the weather data has required columns and format."""
         required_columns = [
-            WeatherDataColumns.GHI.value,
-            WeatherDataColumns.TEMPERATURE.value,
+            WeatherColumns.GHI.value,
+            WeatherColumns.TEMPERATURE.value,
         ]
 
         for col in required_columns:
@@ -243,10 +200,21 @@ class CSVWeatherProvider(BaseWeatherProvider):
         super().__init__(location=location, **kwargs)
         self.file_path = file_path
 
-    def get_weather_data(
-        self, start_time: datetime, end_time: datetime
-    ) -> pd.DataFrame:
-        """Read weather data from CSV file and filter by date range."""
+    # Removed sync get_weather_data; async-only interface below.
+
+    async def get_data(
+        self, force_refresh: bool = False
+    ) -> pd.DataFrame:  # pragma: no cover - thin async bridge
+        """Async interface delegating to get_weather_data.
+
+        If callers previously set a date range via BaseWeatherProvider.get_weather_data,
+        use that range. Otherwise, return the entire file by querying an intentionally
+        wide window that captures all rows.
+        """
+        # Determine desired range using optional hints
+        start = self._range_start or datetime(1900, 1, 1)
+        end = self._range_end or datetime(2100, 1, 1)
+
         try:
             # Read CSV file
             df = pd.read_csv(self.file_path)
@@ -255,32 +223,32 @@ class CSVWeatherProvider(BaseWeatherProvider):
             if "timestamp" in df.columns:
                 df["timestamp"] = pd.to_datetime(df["timestamp"])
                 df.set_index("timestamp", inplace=True)
-            elif WeatherDataColumns.DATE_TIME.value in df.columns:
-                df[WeatherDataColumns.DATE_TIME.value] = pd.to_datetime(
-                    df[WeatherDataColumns.DATE_TIME.value]
+            elif WeatherColumns.DATE_TIME.value in df.columns:
+                df[WeatherColumns.DATE_TIME.value] = pd.to_datetime(
+                    df[WeatherColumns.DATE_TIME.value]
                 )
-                df.set_index(WeatherDataColumns.DATE_TIME.value, inplace=True)
+                df.set_index(WeatherColumns.DATE_TIME.value, inplace=True)
             else:
                 # Assume first column is datetime
                 df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
                 df.set_index(df.columns[0], inplace=True)
 
-            # Filter by date range
-            mask = (df.index >= start_time) & (df.index <= end_time)
+            # Filter by date range (if any was set)
+            mask = (df.index >= start) & (df.index <= end)
             filtered_df = df[mask].copy()
 
             # Standardize column names if needed
             column_mapping = {
-                "ghi": WeatherDataColumns.GHI.value,
-                "dni": WeatherDataColumns.DNI.value,
-                "dhi": WeatherDataColumns.DHI.value,
-                "temp_air": WeatherDataColumns.TEMPERATURE.value,
-                "temperature": WeatherDataColumns.TEMPERATURE.value,
-                "temperature_celsius": WeatherDataColumns.TEMPERATURE.value,
-                "shortwave_radiation": WeatherDataColumns.GHI.value,
-                "direct_normal_irradiance": WeatherDataColumns.DNI.value,
-                "diffuse_radiation": WeatherDataColumns.DHI.value,
-                "temperature_2m": WeatherDataColumns.TEMPERATURE.value,
+                "ghi": WeatherColumns.GHI.value,
+                "dni": WeatherColumns.DNI.value,
+                "dhi": WeatherColumns.DHI.value,
+                "temp_air": WeatherColumns.TEMPERATURE.value,
+                "temperature": WeatherColumns.TEMPERATURE.value,
+                "temperature_celsius": WeatherColumns.TEMPERATURE.value,
+                "shortwave_radiation": WeatherColumns.GHI.value,
+                "direct_normal_irradiance": WeatherColumns.DNI.value,
+                "diffuse_radiation": WeatherColumns.DHI.value,
+                "temperature_2m": WeatherColumns.TEMPERATURE.value,
             }
 
             standardized_df = standardize_column_names(filtered_df, column_mapping)

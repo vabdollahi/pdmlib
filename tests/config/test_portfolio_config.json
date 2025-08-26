@@ -1,0 +1,207 @@
+{
+  "portfolio_config": {
+    "name": "Test Multi-Plant Portfolio",
+    "portfolio_id": "TMP-001",
+    "strategy": "BALANCED",
+    "max_portfolio_risk": 0.15,
+    "diversification_weight": 0.25,
+    "enable_market_arbitrage": true,
+    "enable_ancillary_services": false,
+    "max_total_power_mw": 75.0,
+    "min_operating_plants": 2
+  },
+  "plants": [
+    {
+      "location": {
+        "name": "California_Solar_Plant_1",
+        "latitude": 34.0522,
+        "longitude": -118.2437,
+        "tz": "America/Los_Angeles",
+        "altitude": 100
+      },
+      "pv_systems": [
+        {
+          "inverters": {
+            "count": 3,
+            "database": "CECInverter",
+            "record": "SMA_America__SB5000US__240V_"
+          },
+          "pv_arrays": [
+            {
+              "pv_modules": {
+                "count": 20,
+                "name": "Canadian Solar 220W Array 1",
+                "database": "CECMod",
+                "record": "Canadian_Solar_Inc__CS5P_220M"
+              },
+              "array_setup": {
+                "name": "Fixed Mount Array (15 MW)",
+                "mount": {
+                  "type": "fixed_mount",
+                  "tilt_degrees": 28.0,
+                  "azimuth_degrees": 180.0
+                },
+                "number_of_strings": 1700,
+                "temperature_model": {
+                  "database": "sapm",
+                  "record": "open_rack_glass_glass"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "physical_simulation": {
+        "aoi_model": "physical",
+        "spectral_model": "no_loss"
+      },
+      "batteries": [
+        {
+          "name": "Primary Battery Bank 1",
+          "energy_capacity_mwh": 30.0,
+          "max_power_mw": 15.0,
+          "round_trip_efficiency": 0.87,
+          "initial_soc": 0.6,
+          "min_soc": 0.1,
+          "max_soc": 0.9
+        }
+      ],
+      "plant_config": {
+        "name": "California Solar Plant 1",
+        "plant_id": "CSP-001",
+        "max_net_power_mw": 25.0,
+        "min_net_power_mw": 0.0,
+        "enable_market_participation": true
+      }
+    },
+    {
+      "location": {
+        "name": "Arizona_Solar_Plant_2",
+        "latitude": 33.4484,
+        "longitude": -112.0740,
+        "tz": "America/Phoenix",
+        "altitude": 331
+      },
+      "pv_systems": [
+        {
+          "inverters": {
+            "count": 4,
+            "database": "CECInverter",
+            "record": "Sungrow_Power_Supply_Co___Ltd___SG125HV__600V_"
+          },
+          "pv_arrays": [
+            {
+              "pv_modules": {
+                "count": 20,
+                "name": "Canadian Solar 220W Array 2",
+                "database": "CECMod",
+                "record": "Canadian_Solar_Inc__CS5P_220M"
+              },
+              "array_setup": {
+                "name": "Single Axis Tracking Array (20 MW)",
+                "mount": {
+                  "type": "single_axis",
+                  "axis_tilt_degrees": 0.0,
+                  "axis_azimuth_degrees": 180.0,
+                  "max_angle_degrees": 55.0,
+                  "backtrack": true,
+                  "gcr": 0.35
+                },
+                "number_of_strings": 2270,
+                "temperature_model": {
+                  "database": "sapm",
+                  "record": "close_mount_glass_glass"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "physical_simulation": {
+        "aoi_model": "physical",
+        "spectral_model": "no_loss"
+      },
+      "batteries": [
+        {
+          "name": "Primary Battery Bank 2",
+          "energy_capacity_mwh": 40.0,
+          "max_power_mw": 20.0,
+          "round_trip_efficiency": 0.85,
+          "initial_soc": 0.5,
+          "min_soc": 0.05,
+          "max_soc": 0.95
+        }
+      ],
+      "plant_config": {
+        "name": "Arizona Solar Plant 2",
+        "plant_id": "ASP-002",
+        "max_net_power_mw": 30.0,
+        "min_net_power_mw": 0.0,
+        "enable_market_participation": true
+      }
+    },
+    {
+      "location": {
+        "name": "Nevada_Solar_Plant_3",
+        "latitude": 36.1699,
+        "longitude": -115.1398,
+        "tz": "America/Los_Angeles",
+        "altitude": 610
+      },
+      "pv_systems": [
+        {
+          "inverters": {
+            "count": 2,
+            "database": "CECInverter",
+            "record": "SMA_America__SB5000US__240V_"
+          },
+          "pv_arrays": [
+            {
+              "pv_modules": {
+                "count": 20,
+                "name": "Canadian Solar 220W Array 3",
+                "database": "CECMod",
+                "record": "Canadian_Solar_Inc__CS5P_220M"
+              },
+              "array_setup": {
+                "name": "Fixed Mount Array (10 MW)",
+                "mount": {
+                  "type": "fixed_mount",
+                  "tilt_degrees": 32.0,
+                  "azimuth_degrees": 180.0
+                },
+                "number_of_strings": 1135,
+                "temperature_model": {
+                  "database": "sapm",
+                  "record": "open_rack_glass_glass"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "physical_simulation": {
+        "aoi_model": "physical",
+        "spectral_model": "no_loss"
+      },
+      "batteries": [
+        {
+          "name": "Primary Battery Bank 3",
+          "energy_capacity_mwh": 20.0,
+          "max_power_mw": 10.0,
+          "round_trip_efficiency": 0.88,
+          "initial_soc": 0.7,
+          "min_soc": 0.1,
+          "max_soc": 0.9
+        }
+      ],
+      "plant_config": {
+        "name": "Nevada Solar Plant 3",
+        "plant_id": "NSP-003",
+        "max_net_power_mw": 20.0,
+        "min_net_power_mw": 0.0,
+        "enable_market_participation": true
+      }
+    }
+  ]
+}
