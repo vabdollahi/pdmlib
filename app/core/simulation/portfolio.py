@@ -106,6 +106,12 @@ class PortfolioConfiguration(BaseModel):
     name: str = Field(description="Portfolio identifier", min_length=1)
     portfolio_id: Optional[str] = Field(default=None, description="Unique portfolio ID")
 
+    # Caching configuration
+    organization: Optional[str] = Field(
+        default=None, description="Organization name for caching"
+    )
+    asset: Optional[str] = Field(default=None, description="Asset name for caching")
+
     # Market strategy
     strategy: PortfolioStrategy = Field(
         default=PortfolioStrategy.BALANCED,
@@ -187,6 +193,23 @@ class PowerPlantPortfolio(BaseModel):
         """Initialize portfolio with validation."""
         super().__init__(**data)
         self._validate_portfolio()
+
+        # Set portfolio context for unified caching (organization only)
+        from app.core.utils.portfolio_context import set_portfolio_context
+
+        if self.config.organization is not None:
+            # Set organization context, but let each plant use its own asset name
+            set_portfolio_context(self.config.organization)
+            logger.debug(
+                f"Portfolio organization context set: {self.config.organization}"
+            )
+        elif self.config.organization is None and self.config.asset is not None:
+            # Fallback: use asset as organization if only asset is provided
+            set_portfolio_context(self.config.asset)
+            logger.debug(
+                f"Portfolio context set using asset as organization: "
+                f"{self.config.asset}"
+            )
 
         # Enable PV caching by default for all plants
         try:

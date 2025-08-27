@@ -6,6 +6,10 @@ import pandas as pd
 import pytest
 
 from app.core.utils.location import GeospatialLocation, RegionalLocation
+from app.core.utils.portfolio_context import (
+    clear_portfolio_context,
+    set_portfolio_context,
+)
 from app.core.utils.storage import DataStorage
 
 
@@ -34,6 +38,7 @@ def storage():
 def test_write_data_creates_partitions_and_files(storage, sample_dataframe):
     """
     Tests that write_data creates the correct directory structure and monthly files.
+    Weather data should use raw data caching (independent of organization/asset).
     """
     location = GeospatialLocation(latitude=12.34, longitude=56.78)
     storage.write_data(
@@ -44,11 +49,11 @@ def test_write_data_creates_partitions_and_files(storage, sample_dataframe):
         location=location,
     )
 
-    # Check that files for each month have been created
+    # Weather data should be cached in raw data structure
     expected_files = [
-        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2025_01.parquet",
-        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2025_02.parquet",
-        "memory://test-data/TestOrg/TestAsset/weather/lat12_34_lon56_78/2025_03.parquet",
+        "memory://test-data/raw/weather/lat12_34_lon56_78/2025_01.parquet",
+        "memory://test-data/raw/weather/lat12_34_lon56_78/2025_02.parquet",
+        "memory://test-data/raw/weather/lat12_34_lon56_78/2025_03.parquet",
     ]
     for f in expected_files:
         assert storage.fs.exists(f)
@@ -163,6 +168,7 @@ def test_write_data_updates_existing_file(storage):
 def test_storage_with_regional_location(storage):
     """
     Tests that the storage works correctly with a different location type.
+    Price data should use raw data caching.
     """
     location = RegionalLocation(country="Germany", region="Bavaria")
     dates = pd.to_datetime(pd.date_range("2025-01-01", "2025-01-05", freq="D"))
@@ -177,7 +183,10 @@ def test_storage_with_regional_location(storage):
         location=location,
     )
 
-    expected_file = "memory://test-data/EnergyCorp/GridDE/price/country_germany_region_bavaria/2025_01.parquet"
+    # Price data should be cached in raw data structure
+    expected_file = (
+        "memory://test-data/raw/price/country_germany_region_bavaria/2025_01.parquet"
+    )
     assert storage.fs.exists(expected_file)
 
     df_read = storage.read_data_for_range(
@@ -190,3 +199,77 @@ def test_storage_with_regional_location(storage):
     )
     assert len(df_read) == 5
     assert df_read.iloc[0]["price"] == 100
+
+
+def test_enhanced_caching_behavior(storage):
+    """
+    Tests the enhanced caching behavior with raw vs processed data separation
+    and portfolio context awareness.
+    """
+    location = GeospatialLocation(latitude=40.0, longitude=-110.0)
+    dates = pd.to_datetime(pd.date_range("2025-01-01", "2025-01-05", freq="D"))
+
+    # Sample data
+    weather_data = pd.DataFrame({"temperature": [20, 21, 22, 23, 24]}, index=dates)
+    weather_data.index.name = "date_time"
+
+    pv_data = pd.DataFrame({"power_mw": [5.0, 5.1, 5.2, 5.3, 5.4]}, index=dates)
+    pv_data.index.name = "date_time"
+
+    # Clear any existing context
+    clear_portfolio_context()
+
+    # Test 1: Raw data (weather) should always go to raw structure
+    storage.write_data(
+        df=weather_data,
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="weather",
+        location=location,
+    )
+
+    expected_weather_file = (
+        "memory://test-data/raw/weather/lat40_0_lon-110_0/2025_01.parquet"
+    )
+    assert storage.fs.exists(expected_weather_file)
+
+    # Test 2: Processed data without portfolio context (legacy structure)
+    storage.write_data(
+        df=pv_data,
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="pv_generation",
+        location=location,
+    )
+
+    legacy_pv_file = "memory://test-data/TestOrg/TestAsset/pv_generation/lat40_0_lon-110_0/2025_01.parquet"
+    assert storage.fs.exists(legacy_pv_file)
+
+    # Test 3: Processed data with portfolio context (unified structure)
+    set_portfolio_context("TestOrg", "TestAsset")
+
+    storage.write_data(
+        df=pv_data,
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="pv_generation",
+        location=location,
+    )
+
+    unified_pv_file = "memory://test-data/TestOrg/TestAsset/data/power_generation/lat40_0_lon-110_0/2025_01.parquet"
+    assert storage.fs.exists(unified_pv_file)
+
+    # Test 4: Raw data should still go to raw structure even with portfolio context
+    storage.write_data(
+        df=weather_data,
+        organization="TestOrg",
+        asset="TestAsset",
+        data_type="weather",
+        location=location,
+    )
+
+    # Should use the same raw file
+    assert storage.fs.exists(expected_weather_file)
+
+    # Clean up
+    clear_portfolio_context()
