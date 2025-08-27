@@ -374,3 +374,64 @@ class TestPortfolioEdgeCases:
         print(f"Weather data loaded: {len(weather_data)} rows")
         print(f"Price data loaded: {len(price_data)} rows")
         print("CSV data integrity check passed - no external API calls made")
+
+
+class TestPortfolioPhysicsValidation:
+    """Test portfolio physics and logical constraints."""
+
+    def test_grid_purchase_physics_limits(self):
+        """Test that grid purchase limits are physically reasonable."""
+        # Test realistic grid purchase limits
+        config = PortfolioConfiguration(
+            name="Physics Test Portfolio",
+            allow_grid_purchase=True,
+            max_grid_purchase_mw=50.0,  # Reasonable for small producer
+        )
+
+        assert config.allow_grid_purchase is True
+        assert config.max_grid_purchase_mw == 50.0
+
+        # Test that grid purchase limit is positive
+        with pytest.raises(ValueError):
+            PortfolioConfiguration(
+                name="Invalid Portfolio",
+                max_grid_purchase_mw=-10.0,  # Should fail
+            )
+
+    def test_portfolio_power_physics(self):
+        """Test portfolio power capacity physics constraints."""
+        # Test reasonable total capacity limits
+        config = PortfolioConfiguration(
+            name="Power Physics Test",
+            max_total_power_mw=1000.0,  # 1 GW utility scale
+            min_operating_plants=2,
+        )
+
+        assert config.max_total_power_mw == 1000.0
+        assert config.min_operating_plants >= 1
+
+        # Test that power limits are positive
+        with pytest.raises(ValueError):
+            PortfolioConfiguration(
+                name="Invalid Power Portfolio",
+                max_total_power_mw=-100.0,  # Should fail
+            )
+
+    def test_risk_management_physics(self):
+        """Test risk management parameters are within realistic bounds."""
+        config = PortfolioConfiguration(
+            name="Risk Test Portfolio",
+            max_portfolio_risk=0.15,  # 15% max risk
+            diversification_weight=0.3,  # 30% weight on diversification
+        )
+
+        # Risk should be between 0 and 1
+        assert 0.0 <= config.max_portfolio_risk <= 1.0
+        assert 0.0 <= config.diversification_weight <= 1.0
+
+        # Test extreme values are rejected
+        with pytest.raises(ValueError):
+            PortfolioConfiguration(
+                name="High Risk Portfolio",
+                max_portfolio_risk=1.5,  # Should fail - over 100%
+            )

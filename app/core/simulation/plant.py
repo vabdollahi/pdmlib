@@ -427,10 +427,19 @@ class SolarBatteryPlant(BaseModel):
 
         # Determine PV generation and battery dispatch strategy
         if target_net_power_mw <= pv_potential_mw:
-            # Target achievable with PV alone - charge batteries with excess
+            # Target achievable with PV alone
             pv_generation_mw = target_net_power_mw
             excess_pv_mw = pv_potential_mw - target_net_power_mw
-            battery_target_power_mw = -excess_pv_mw  # Negative for charging
+
+            # Try to charge batteries with excess PV, but don't force it
+            # Allow for PV curtailment if batteries can't absorb excess
+            battery_target_power_mw = -min(
+                excess_pv_mw,
+                sum(
+                    battery.get_available_power(interval_minutes)[0]
+                    for battery in self.batteries
+                ),
+            )
         else:
             # Need battery discharge to meet target
             pv_generation_mw = pv_potential_mw

@@ -10,8 +10,9 @@ wheels/
 # Virtual environments
 .venv
 
-# Ruff
+# Lint
 .ruff_cache
+.flake8
 
 # data folders
 # Ignore only the repository root data directory where cached outputs are stored

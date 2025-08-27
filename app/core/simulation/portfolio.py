@@ -136,6 +136,18 @@ class PortfolioConfiguration(BaseModel):
     enable_ancillary_services: bool = Field(
         default=False, description="Enable ancillary services participation"
     )
+    allow_grid_purchase: bool = Field(
+        default=False,
+        description=(
+            "Allow purchasing power from the grid when generation is insufficient. "
+            "True for small producers/prosumers, False for traditional power plants."
+        ),
+    )
+    max_grid_purchase_mw: float = Field(
+        default=50.0,
+        description="Maximum power that can be purchased from grid (MW)",
+        gt=0.0,
+    )
 
     # Portfolio limits
     max_total_power_mw: Optional[float] = Field(
@@ -441,6 +453,7 @@ class PowerPlantPortfolio(BaseModel):
 
         Returns:
             Tuple of (max_generation_mw, max_consumption_mw)
+            Note: If grid purchase is allowed, max_generation includes grid power
         """
         total_generation = 0.0
         total_consumption = 0.0
@@ -458,6 +471,10 @@ class PowerPlantPortfolio(BaseModel):
                     f"Error getting power availability from plant "
                     f"{plant.config.name}: {e}"
                 )
+
+        # If grid purchase is allowed, add the configurable grid purchase limit
+        if self.config.allow_grid_purchase:
+            total_generation += self.config.max_grid_purchase_mw
 
         return total_generation, total_consumption
 
@@ -646,6 +663,20 @@ class PowerPlantPortfolio(BaseModel):
                 )
                 all_operations_valid = False
 
+        # Handle grid purchase if enabled and there's a power shortfall
+        grid_purchase_mw = 0.0
+        if self.config.allow_grid_purchase and total_actual_power < target_net_power_mw:
+            power_shortfall_mw = target_net_power_mw - total_actual_power
+            # Limit grid purchase to the configured maximum
+            grid_purchase_mw = min(power_shortfall_mw, self.config.max_grid_purchase_mw)
+            total_actual_power += grid_purchase_mw
+
+            logger.debug(
+                f"Grid purchase: {grid_purchase_mw:.2f}MW "
+                f"(max {self.config.max_grid_purchase_mw:.2f}MW) to meet "
+                f"shortfall for portfolio '{self.config.name}'"
+            )
+
         # Create portfolio state with extended information
         portfolio_state = self._get_portfolio_state(
             timestamp, total_generation, total_consumption
@@ -654,6 +685,7 @@ class PowerPlantPortfolio(BaseModel):
             {
                 "plant_results": plant_results,
                 "target_power_mw": target_net_power_mw,
+                "grid_purchase_mw": grid_purchase_mw,
                 "allocation_efficiency": (
                     total_actual_power / target_net_power_mw
                     if target_net_power_mw != 0
