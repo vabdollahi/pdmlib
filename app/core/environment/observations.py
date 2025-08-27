@@ -30,9 +30,9 @@ class ObservationName:
     NET_POWER_CAPABILITY = "net_power_capability_mw"
 
     # Market observations
-    CURRENT_PRICE = "current_price_usd_mwh"
-    PRICE_FORECAST = "price_forecast_usd_mwh"
-    PRICE_HISTORY = "price_history_usd_mwh"
+    CURRENT_PRICE = "current_price_dollar_mwh"
+    PRICE_FORECAST = "price_forecast_dollar_mwh"
+    PRICE_HISTORY = "price_history_dollar_mwh"
 
     # Time-based observations
     HOUR_OF_DAY = "hour_of_day"

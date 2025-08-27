@@ -52,7 +52,7 @@ class PlantStateColumns(str, Enum):
     NET_POWER_MW = "net_power_mw"
     BATTERY_SOC = "battery_soc"
     OPERATION_MODE = "operation_mode"
-    REVENUE_USD = "revenue_usd"
+    REVENUE_DOLLAR = "revenue_dollar"
 
 
 # -----------------------------------------------------------------------------
@@ -521,13 +521,13 @@ class SolarBatteryPlant(BaseModel):
                 # TODO: Implement real-time revenue calculation
                 # This requires integrating with the SolarRevenueCalculator
                 # For now, use placeholder but log the limitation
-                state[PlantStateColumns.REVENUE_USD.value] = 0.0
+                state[PlantStateColumns.REVENUE_DOLLAR.value] = 0.0
                 logger.debug("Revenue calculation placeholder - needs implementation")
             except Exception as e:
                 logger.warning(f"Error calculating revenue: {e}")
-                state[PlantStateColumns.REVENUE_USD.value] = 0.0
+                state[PlantStateColumns.REVENUE_DOLLAR.value] = 0.0
         else:
-            state[PlantStateColumns.REVENUE_USD.value] = 0.0
+            state[PlantStateColumns.REVENUE_DOLLAR.value] = 0.0
 
         return state
 

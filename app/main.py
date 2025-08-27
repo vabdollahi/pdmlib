@@ -11,6 +11,7 @@ Now uses the unified configuration system for consistent setup.
 
 import asyncio
 import os
+from datetime import datetime
 
 from app.config import config_manager
 from app.core.simulation.price_provider import (
@@ -45,16 +46,13 @@ async def create_solar_system():
         location = GeospatialLocation(latitude=43.65107, longitude=-79.347015)
         org_asset = ("SolarRevenue", "HOEP_Data")
 
-    # Centralized date configuration for consistent time ranges
-    from datetime import datetime
+    # Define simulation time range (24-hour simulation starting at 2025-07-15)
+    start_time = datetime(2025, 7, 15, 0, 0, 0)
+    end_time = datetime(2025, 7, 15, 23, 59, 59)
 
-    # Define analysis period as datetime objects (single source of truth)
-    analysis_start = datetime(2025, 7, 15, 0, 0, 0)  # Start at midnight
-    analysis_end = datetime(2025, 7, 16, 0, 0, 0)  # End at midnight next day
-
-    # Convert to string format for provider initialization
-    start_date = analysis_start.strftime("%Y-%m-%d %H:%M:%S")
-    end_date = analysis_end.strftime("%Y-%m-%d %H:%M:%S")
+    # Get time range strings for provider initialization
+    start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    end_date = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
     logger.info(f"Analysis Date: {start_date}")
     logger.info(f"Market Region: {market_region}")
@@ -72,8 +70,8 @@ async def create_solar_system():
         )
         price_provider = cfg.create_provider()
 
-        # Test if provider can actually get data using same datetime objects
-        price_provider.set_range(analysis_start, analysis_end)
+        # Test if provider can actually get data using datetime objects
+        price_provider.set_range(start_time, end_time)
         test_data = await price_provider.get_data()
 
         if test_data.empty:
@@ -105,13 +103,13 @@ async def create_solar_system():
     pv_model = config_manager.create_simple_solar_farm(
         capacity_mw=10.0,
         location=location,
-        use_api_weather=True,  # Use API weather provider with caching
+        use_csv_weather=False,  # Use API weather provider with caching
         start_date=start_date,
         end_date=end_date,
     )
     logger.info("✓ Solar farm ready")
 
-    return price_provider, pv_model, analysis_start, analysis_end
+    return price_provider, pv_model, start_time, end_time
 
 
 async def main():
@@ -134,7 +132,7 @@ async def main():
 
         logger.info("Calculating Solar Revenue...")
 
-        # Calculate revenue using the same date range as provider initialization
+        # Calculate revenue using the datetime range
         result = await calculator.calculate_revenue(start_time, end_time)
 
         # Display results
@@ -143,13 +141,13 @@ async def main():
         logger.info("=" * 55)
 
         logger.info(f"Total Generation: {result.total_generation_mwh:.2f} MWh")
-        logger.info(f"Total Revenue: ${result.total_revenue_usd:.2f}")
+        logger.info(f"Total Revenue: ${result.total_revenue_dollar:.2f}")
         logger.info(f"Average Revenue: ${result.avg_revenue_per_mwh:.2f}/MWh")
 
         logger.info("LMP Price Analysis:")
-        logger.info(f"Average LMP: ${result.avg_lmp_usd_mwh:.2f}/MWh")
-        logger.info(f"Minimum LMP: ${result.min_lmp_usd_mwh:.2f}/MWh")
-        logger.info(f"Maximum LMP: ${result.max_lmp_usd_mwh:.2f}/MWh")
+        logger.info(f"Average LMP: ${result.avg_lmp_dollar_mwh:.2f}/MWh")
+        logger.info(f"Minimum LMP: ${result.min_lmp_dollar_mwh:.2f}/MWh")
+        logger.info(f"Maximum LMP: ${result.max_lmp_dollar_mwh:.2f}/MWh")
 
         # Duck Curve analysis
         logger.info("Duck Curve Analysis:")
@@ -167,11 +165,11 @@ async def main():
         if len(hourly_data) > 0:
             logger.info("Sample Hourly Data (sorted by LMP):")
             # Show range of prices
-            sample = hourly_data.sort_values("lmp_usd_mwh").head(6)
-            sample_cols = ["generation_mw", "lmp_usd_mwh", "revenue_usd"]
+            sample = hourly_data.sort_values("lmp_dollar_mwh").head(6)
+            sample_cols = ["generation_mw", "lmp_dollar_mwh", "revenue_dollar"]
             sample_display = sample[sample_cols].copy()
             sample_display["hour"] = sample["hour"].dt.strftime("%H:%M")
-            display_cols = ["hour", "generation_mw", "lmp_usd_mwh", "revenue_usd"]
+            display_cols = ["hour", "generation_mw", "lmp_dollar_mwh", "revenue_dollar"]
             sample_display = sample_display[display_cols]
             logger.info(sample_display.to_string(index=False))
 

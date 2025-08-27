@@ -27,10 +27,10 @@ class SolarRevenueResult(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     total_generation_mwh: float = Field(description="Total solar generation in MWh")
-    total_revenue_usd: float = Field(description="Total revenue in USD")
-    avg_lmp_usd_mwh: float = Field(description="Average LMP price")
-    min_lmp_usd_mwh: float = Field(description="Minimum LMP price")
-    max_lmp_usd_mwh: float = Field(description="Maximum LMP price")
+    total_revenue_dollar: float = Field(description="Total revenue in dollars")
+    avg_lmp_dollar_mwh: float = Field(description="Average LMP price")
+    min_lmp_dollar_mwh: float = Field(description="Minimum LMP price")
+    max_lmp_dollar_mwh: float = Field(description="Maximum LMP price")
     negative_price_hours: int = Field(description="Hours with negative LMP")
     avg_revenue_per_mwh: float = Field(description="Average revenue per MWh")
     duck_curve_detected: bool = Field(
@@ -100,10 +100,10 @@ class SolarRevenueCalculator:
             logger.warning("No LMP price data available")
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
-                total_revenue_usd=0.0,
-                avg_lmp_usd_mwh=0.0,
-                min_lmp_usd_mwh=0.0,
-                max_lmp_usd_mwh=0.0,
+                total_revenue_dollar=0.0,
+                avg_lmp_dollar_mwh=0.0,
+                min_lmp_dollar_mwh=0.0,
+                max_lmp_dollar_mwh=0.0,
                 negative_price_hours=0,
                 avg_revenue_per_mwh=0.0,
                 duck_curve_detected=False,
@@ -120,10 +120,10 @@ class SolarRevenueCalculator:
             price_col = PriceColumns.PRICE_DOLLAR_MWH.value
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
-                total_revenue_usd=0.0,
-                avg_lmp_usd_mwh=price_data[price_col].mean(),
-                min_lmp_usd_mwh=price_data[price_col].min(),
-                max_lmp_usd_mwh=price_data[price_col].max(),
+                total_revenue_dollar=0.0,
+                avg_lmp_dollar_mwh=price_data[price_col].mean(),
+                min_lmp_dollar_mwh=price_data[price_col].min(),
+                max_lmp_dollar_mwh=price_data[price_col].max(),
                 negative_price_hours=len(price_data[price_data[price_col] < 0]),
                 avg_revenue_per_mwh=0.0,
                 duck_curve_detected=price_data[price_col].min() < 0,
@@ -139,10 +139,10 @@ class SolarRevenueCalculator:
             price_col = PriceColumns.PRICE_DOLLAR_MWH.value
             return SolarRevenueResult(
                 total_generation_mwh=0.0,
-                total_revenue_usd=0.0,
-                avg_lmp_usd_mwh=price_data[price_col].mean(),
-                min_lmp_usd_mwh=price_data[price_col].min(),
-                max_lmp_usd_mwh=price_data[price_col].max(),
+                total_revenue_dollar=0.0,
+                avg_lmp_dollar_mwh=price_data[price_col].mean(),
+                min_lmp_dollar_mwh=price_data[price_col].min(),
+                max_lmp_dollar_mwh=price_data[price_col].max(),
                 negative_price_hours=len(price_data[price_data[price_col] < 0]),
                 avg_revenue_per_mwh=0.0,
                 duck_curve_detected=price_data[price_col].min() < 0,
@@ -202,10 +202,12 @@ class SolarRevenueCalculator:
         # Convert power to MW if needed (assuming input might be in W)
         combined["generation_mw"] = combined[power_col] / 1000.0
         price_col = PriceColumns.PRICE_DOLLAR_MWH.value
-        combined["lmp_usd_mwh"] = combined[price_col]
+        combined["lmp_dollar_mwh"] = combined[price_col]
 
         # Calculate hourly revenue: LMP ($/MWh) × Generation (MW) × 1 hour
-        combined["revenue_usd"] = combined["generation_mw"] * combined["lmp_usd_mwh"]
+        combined["revenue_dollar"] = (
+            combined["generation_mw"] * combined["lmp_dollar_mwh"]
+        )
 
         return combined
 
@@ -214,23 +216,23 @@ class SolarRevenueCalculator:
 
         # Basic metrics
         total_generation_mwh = data["generation_mw"].sum()
-        total_revenue_usd = data["revenue_usd"].sum()
-        avg_lmp_usd_mwh = data["lmp_usd_mwh"].mean()
-        min_lmp_usd_mwh = data["lmp_usd_mwh"].min()
-        max_lmp_usd_mwh = data["lmp_usd_mwh"].max()
+        total_revenue_dollar = data["revenue_dollar"].sum()
+        avg_lmp_dollar_mwh = data["lmp_dollar_mwh"].mean()
+        min_lmp_dollar_mwh = data["lmp_dollar_mwh"].min()
+        max_lmp_dollar_mwh = data["lmp_dollar_mwh"].max()
 
         # Duck Curve analysis
-        negative_price_hours = len(data[data["lmp_usd_mwh"] < 0])
-        duck_curve_detected = min_lmp_usd_mwh < 0
+        negative_price_hours = len(data[data["lmp_dollar_mwh"] < 0])
+        duck_curve_detected = min_lmp_dollar_mwh < 0
 
         # Average revenue per MWh
         avg_revenue_per_mwh = 0.0
         if total_generation_mwh > 0:
-            avg_revenue_per_mwh = total_revenue_usd / total_generation_mwh
+            avg_revenue_per_mwh = total_revenue_dollar / total_generation_mwh
 
         logger.info(
             f"Revenue calculation complete: "
-            f"${total_revenue_usd:.2f} from {total_generation_mwh:.2f} MWh"
+            f"${total_revenue_dollar:.2f} from {total_generation_mwh:.2f} MWh"
         )
         if duck_curve_detected:
             logger.info(
@@ -239,10 +241,10 @@ class SolarRevenueCalculator:
 
         return SolarRevenueResult(
             total_generation_mwh=total_generation_mwh,
-            total_revenue_usd=total_revenue_usd,
-            avg_lmp_usd_mwh=avg_lmp_usd_mwh,
-            min_lmp_usd_mwh=min_lmp_usd_mwh,
-            max_lmp_usd_mwh=max_lmp_usd_mwh,
+            total_revenue_dollar=total_revenue_dollar,
+            avg_lmp_dollar_mwh=avg_lmp_dollar_mwh,
+            min_lmp_dollar_mwh=min_lmp_dollar_mwh,
+            max_lmp_dollar_mwh=max_lmp_dollar_mwh,
             negative_price_hours=negative_price_hours,
             avg_revenue_per_mwh=avg_revenue_per_mwh,
             duck_curve_detected=duck_curve_detected,
@@ -267,7 +269,7 @@ class SolarRevenueCalculator:
         if result.hourly_data is not None:
             # Return key columns for analysis
             return result.hourly_data[
-                ["hour", "generation_mw", "lmp_usd_mwh", "revenue_usd"]
+                ["hour", "generation_mw", "lmp_dollar_mwh", "revenue_dollar"]
             ].sort_values("hour")
 
         return pd.DataFrame()

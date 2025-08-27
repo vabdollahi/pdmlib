@@ -47,7 +47,7 @@ class PortfolioStateColumns(str, Enum):
     TOTAL_GENERATION_MW = "total_generation_mw"
     TOTAL_CONSUMPTION_MW = "total_consumption_mw"
     NET_POWER_MW = "net_power_mw"
-    REVENUE_USD = "revenue_usd"
+    REVENUE_DOLLAR = "revenue_dollar"
     PLANT_COUNT = "plant_count"
     STRATEGY = "strategy"
 
@@ -724,10 +724,10 @@ class PowerPlantPortfolio(BaseModel):
         if self.revenue_calculator:
             try:
                 # Portfolio-level revenue calculation would need implementation
-                state[PortfolioStateColumns.REVENUE_USD.value] = 0.0
+                state[PortfolioStateColumns.REVENUE_DOLLAR.value] = 0.0
             except Exception as e:
-                logger.warning(f"Error calculating portfolio revenue: {e}")
-                state[PortfolioStateColumns.REVENUE_USD.value] = 0.0
+                logger.warning(f"Error calculating revenue for portfolio: {e}")
+                state[PortfolioStateColumns.REVENUE_DOLLAR.value] = 0.0
 
         return state
 

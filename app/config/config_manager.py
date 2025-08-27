@@ -22,7 +22,7 @@ from app.core.simulation.pvlib_models import PVLibModel
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.simulation.weather_provider import (
     CSVWeatherProvider,
-    WeatherProvider,
+    create_open_meteo_provider,
 )
 from app.core.utils.location import GeospatialLocation
 
@@ -82,7 +82,7 @@ class ConfigManager:
             from app.core.utils.date_handling import TimeInterval
             from app.core.utils.storage import DataStorage
 
-            return WeatherProvider(
+            return create_open_meteo_provider(
                 location=location,
                 start_date=start_date or "2025-07-15",
                 end_date=end_date or "2025-07-16",
@@ -91,23 +91,6 @@ class ConfigManager:
                 interval=TimeInterval.HOURLY,
                 storage=DataStorage(base_path="data"),
             )
-
-    def create_csv_weather_provider(
-        self, location: Optional[GeospatialLocation] = None
-    ):
-        """Create a CSV weather provider for testing (no caching)."""
-        return self.create_weather_provider(location=location, use_csv=True)
-
-    def create_api_weather_provider(
-        self,
-        location: Optional[GeospatialLocation] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ):
-        """Create an API weather provider for production (with caching)."""
-        return self.create_weather_provider(
-            location=location, use_csv=False, start_date=start_date, end_date=end_date
-        )
 
     def create_pv_model_from_config(
         self, plant_config: Dict, weather_provider, enable_caching: bool = True
@@ -143,7 +126,7 @@ class ConfigManager:
         capacity_mw: float = 10.0,
         location: Optional[GeospatialLocation] = None,
         weather_provider=None,
-        use_api_weather: bool = False,
+        use_csv_weather: bool = False,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> PVModel:
@@ -152,14 +135,13 @@ class ConfigManager:
             location = self.create_location()
 
         if weather_provider is None:
-            if use_api_weather:
-                # Use API weather provider with caching
-                weather_provider = self.create_api_weather_provider(
-                    location=location, start_date=start_date, end_date=end_date
-                )
-            else:
-                # Use CSV weather provider for testing
-                weather_provider = self.create_csv_weather_provider(location=location)
+            # Use the unified weather provider method
+            weather_provider = self.create_weather_provider(
+                location=location,
+                use_csv=use_csv_weather,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
         # Create a simple 10 MW solar farm configuration
         simple_config = {
@@ -213,7 +195,7 @@ class ConfigManager:
         return self.create_pv_model_from_config(
             simple_config,
             weather_provider,
-            enable_caching=use_api_weather,  # Enable caching only when using API
+            enable_caching=not use_csv_weather,  # Enable caching only when using API
         )
 
     def create_portfolio_from_unified_config(self) -> PowerPlantPortfolio:

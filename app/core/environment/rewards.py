@@ -63,12 +63,12 @@ class RevenueReward(Reward):
         """Calculate revenue-based reward."""
         # Get current electricity price (placeholder implementation)
         # In a full implementation, this would integrate with the price providers
-        current_price_usd_mwh = await self._get_current_price(portfolio, timestamp)
+        current_price_dollar_mwh = await self._get_current_price(portfolio, timestamp)
 
         # Calculate instant revenue
         # Revenue = Power (MW) × Price ($/MWh) × Time (hours)
         time_hours = interval_min / 60.0
-        instant_revenue = power_to_grid_mw * current_price_usd_mwh * time_hours
+        instant_revenue = power_to_grid_mw * current_price_dollar_mwh * time_hours
 
         # Apply reward smoothing if configured
         if self._smoothed_reward_parameter == 1.0:
@@ -79,21 +79,21 @@ class RevenueReward(Reward):
 
         # Additional reward components
         reward_info = {
-            "instant_revenue_usd": instant_revenue,
-            "smoothed_revenue_usd": self._smoothed_revenue or instant_revenue,
+            "instant_revenue_dollar": instant_revenue,
+            "smoothed_revenue_dollar": self._smoothed_revenue or instant_revenue,
             "power_to_grid_mw": power_to_grid_mw,
-            "price_usd_mwh": current_price_usd_mwh,
+            "price_dollar_mwh": current_price_dollar_mwh,
             "interval_hours": time_hours,
         }
 
         # Add penalty for battery degradation (simplified)
         battery_penalty = self._calculate_battery_penalty(portfolio)
         reward = (reward or 0.0) - battery_penalty
-        reward_info["battery_penalty_usd"] = battery_penalty
+        reward_info["battery_penalty_dollar"] = battery_penalty
 
         logger.debug(
             f"Reward calculation: power={power_to_grid_mw:.2f}MW, "
-            f"price=${current_price_usd_mwh:.2f}/MWh, "
+            f"price=${current_price_dollar_mwh:.2f}/MWh, "
             f"revenue=${instant_revenue:.4f}, reward={reward:.4f}"
         )
 
@@ -216,12 +216,12 @@ class RewardFactory:
 
     @staticmethod
     def create_profit_reward(
-        operational_cost_usd_mwh: float = 5.0,
+        operational_cost_dollar_mwh: float = 5.0,
         smoothed_reward_parameter: float = 0.1,
     ) -> "ProfitReward":
         """Create a profit-based reward calculator (revenue - costs)."""
         return ProfitReward(
-            operational_cost_usd_mwh=operational_cost_usd_mwh,
+            operational_cost_dollar_mwh=operational_cost_dollar_mwh,
             smoothed_reward_parameter=smoothed_reward_parameter,
         )
 
@@ -231,18 +231,18 @@ class ProfitReward(RevenueReward):
 
     def __init__(
         self,
-        operational_cost_usd_mwh: float = 5.0,
+        operational_cost_dollar_mwh: float = 5.0,
         smoothed_reward_parameter: float = 0.1,
     ):
         """
         Initialize profit reward calculator.
 
         Args:
-            operational_cost_usd_mwh: Operational cost per MWh
+            operational_cost_dollar_mwh: Operational cost per MWh
             smoothed_reward_parameter: Smoothing factor for reward
         """
         super().__init__(smoothed_reward_parameter)
-        self.operational_cost_usd_mwh = operational_cost_usd_mwh
+        self.operational_cost_dollar_mwh = operational_cost_dollar_mwh
 
     async def create(
         self,
@@ -261,7 +261,7 @@ class ProfitReward(RevenueReward):
         time_hours = interval_min / 60.0
         if power_to_grid_mw > 0:  # Only charge costs for generation
             operational_cost = (
-                power_to_grid_mw * self.operational_cost_usd_mwh * time_hours
+                power_to_grid_mw * self.operational_cost_dollar_mwh * time_hours
             )
         else:
             operational_cost = 0.0
@@ -270,7 +270,7 @@ class ProfitReward(RevenueReward):
         profit_reward = revenue_reward - operational_cost
 
         # Update reward info
-        reward_info["operational_cost_usd"] = operational_cost
-        reward_info["profit_usd"] = profit_reward
+        reward_info["operational_cost_dollar"] = operational_cost
+        reward_info["profit_dollar"] = profit_reward
 
         return profit_reward, reward_info
