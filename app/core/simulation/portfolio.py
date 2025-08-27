@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +19,9 @@ from typing_extensions import Protocol
 from app.core.simulation.plant import Plant, SolarBatteryPlant
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.core.utils.storage import DataStorage
 
 logger = get_logger("portfolio")
 
@@ -103,6 +106,12 @@ class PortfolioConfiguration(BaseModel):
     name: str = Field(description="Portfolio identifier", min_length=1)
     portfolio_id: Optional[str] = Field(default=None, description="Unique portfolio ID")
 
+    # Caching configuration
+    organization: Optional[str] = Field(
+        default=None, description="Organization name for caching"
+    )
+    asset: Optional[str] = Field(default=None, description="Asset name for caching")
+
     # Market strategy
     strategy: PortfolioStrategy = Field(
         default=PortfolioStrategy.BALANCED,
@@ -184,6 +193,34 @@ class PowerPlantPortfolio(BaseModel):
         """Initialize portfolio with validation."""
         super().__init__(**data)
         self._validate_portfolio()
+
+        # Set portfolio context for unified caching (organization only)
+        from app.core.utils.portfolio_context import set_portfolio_context
+
+        if self.config.organization is not None:
+            # Set organization context, but let each plant use its own asset name
+            set_portfolio_context(self.config.organization)
+            logger.debug(
+                f"Portfolio organization context set: {self.config.organization}"
+            )
+        elif self.config.organization is None and self.config.asset is not None:
+            # Fallback: use asset as organization if only asset is provided
+            set_portfolio_context(self.config.asset)
+            logger.debug(
+                f"Portfolio context set using asset as organization: "
+                f"{self.config.asset}"
+            )
+
+        # Enable PV caching by default for all plants
+        try:
+            from app.core.utils.storage import DataStorage
+
+            default_storage = DataStorage(base_path="data")
+            self.enable_pv_caching(default_storage)
+            logger.info(f"PV caching auto-enabled for portfolio '{self.config.name}'")
+        except Exception as e:
+            logger.warning(f"Could not auto-enable PV caching for portfolio: {e}")
+
         logger.info(
             f"Initialized portfolio '{self.config.name}' with {len(self.plants)} plants"
         )
@@ -344,6 +381,53 @@ class PowerPlantPortfolio(BaseModel):
                 f"Portfolio strategy changed: {self._current_strategy} → {strategy}"
             )
             self._current_strategy = strategy
+
+    def enable_pv_caching(self, storage: "DataStorage") -> None:
+        """
+        Enable PV generation caching for all plants in the portfolio.
+
+        Args:
+            storage: DataStorage instance for caching
+        """
+        enabled_count = 0
+        for plant in self.plants:
+            if hasattr(plant, "enable_pv_caching"):
+                plant.enable_pv_caching(storage)
+                enabled_count += 1
+
+        logger.info(
+            f"PV caching enabled for {enabled_count}/{len(self.plants)} plants "
+            f"in portfolio '{self.config.name}'"
+        )
+
+    def disable_pv_caching(self) -> None:
+        """Disable PV generation caching for all plants in the portfolio."""
+        disabled_count = 0
+        for plant in self.plants:
+            if hasattr(plant, "disable_pv_caching"):
+                plant.disable_pv_caching()
+                disabled_count += 1
+
+        logger.info(
+            f"PV caching disabled for {disabled_count}/{len(self.plants)} plants "
+            f"in portfolio '{self.config.name}'"
+        )
+
+    def get_pv_caching_status(self) -> Dict[str, bool]:
+        """
+        Get PV caching status for all plants in the portfolio.
+
+        Returns:
+            Dictionary mapping plant names to their caching status
+        """
+        status = {}
+        for plant in self.plants:
+            plant_name = plant.config.name
+            if hasattr(plant, "is_pv_caching_enabled"):
+                status[plant_name] = plant.is_pv_caching_enabled
+            else:
+                status[plant_name] = False
+        return status
 
     async def get_available_power(
         self, timestamp: datetime.datetime, interval_minutes: float = 5.0
