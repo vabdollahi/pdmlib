@@ -2,7 +2,7 @@
   "portfolio_config": {
     "name": "Test Multi-Plant Portfolio",
     "portfolio_id": "TMP-001",
-    "strategy": "BALANCED",
+    "strategy": "balanced",
     "max_portfolio_risk": 0.15,
     "diversification_weight": 0.25,
     "enable_market_arbitrage": true,
@@ -184,19 +184,9 @@
         "aoi_model": "physical",
         "spectral_model": "no_loss"
       },
-      "batteries": [
-        {
-          "name": "Primary Battery Bank 3",
-          "energy_capacity_mwh": 20.0,
-          "max_power_mw": 10.0,
-          "round_trip_efficiency": 0.88,
-          "initial_soc": 0.7,
-          "min_soc": 0.1,
-          "max_soc": 0.9
-        }
-      ],
+      "batteries": [],
       "plant_config": {
-        "name": "Nevada Solar Plant 3",
+        "name": "Nevada Solar Plant 3 (No Battery)",
         "plant_id": "NSP-003",
         "max_net_power_mw": 20.0,
         "min_net_power_mw": 0.0,

@@ -366,23 +366,52 @@ class PVModel(BaseModel):
             if dc_results is not None:
                 for array, pdc in zip(model_chain.system.arrays, dc_results):
                     dc_col_name = self.get_dc_column_name(array.name)
+                    dc_values = None
+
                     # Try different ways to access DC power for CEC model
-                    if hasattr(pdc, "__getitem__") and "p_mp" in pdc:
-                        results[dc_col_name] = pdc["p_mp"].values
-                    elif hasattr(pdc, "values"):
-                        results[dc_col_name] = pdc.values
-                    else:
-                        msg = f"Could not extract DC power for array {array.name}"
-                        logger.warning(msg)
+                    try:
+                        if hasattr(pdc, "__getitem__") and "p_mp" in pdc:
+                            dc_values = pdc["p_mp"].values
+                        elif hasattr(pdc, "values"):
+                            dc_values = pdc.values
+                        elif hasattr(pdc, "__iter__") and not isinstance(pdc, str):
+                            # Try to iterate over the result
+                            dc_values = list(pdc)
+                        else:
+                            # Log as debug since DC power is optional for revenue calc
+                            logger.debug(
+                                f"Could not extract DC power for array {array.name} "
+                                "(AC power calculation continues normally)"
+                            )
+                            continue
+                    except (KeyError, AttributeError, TypeError) as e:
+                        logger.debug(
+                            f"DC power extraction failed for array {array.name}: {e} "
+                            "(AC power calculation continues normally)"
+                        )
                         continue
-                    dc_columns.append(dc_col_name)
+
+                    if dc_values is not None:
+                        results[dc_col_name] = dc_values
+                        dc_columns.append(dc_col_name)
 
                 # Store total DC power
                 if dc_columns:
                     total_dc = results[dc_columns].sum(axis=1)
                     results[PVLibResultsColumns.DC.value] = total_dc
+                    logger.debug(
+                        f"Successfully extracted DC power for {len(dc_columns)} arrays"
+                    )
+                else:
+                    logger.debug(
+                        "No DC power data extracted "
+                        "(AC power calculation continues normally)"
+                    )
         except Exception as e:
-            logger.warning(f"Could not process DC results for CEC: {e}")
+            logger.debug(
+                f"Could not process DC results for CEC: {e} "
+                "(AC power calculation continues normally)"
+            )
 
     def _process_default_results(
         self, model_chain: modelchain.ModelChain
@@ -462,15 +491,23 @@ class PVModel(BaseModel):
                         results[dc_col_name] = dc_values
                         dc_columns.append(dc_col_name)
                     else:
-                        msg = f"Could not extract DC power for array {array.name}"
-                        logger.warning(msg)
+                        logger.debug(
+                            f"Could not extract DC power for array {array.name} "
+                            "(AC power calculation continues normally)"
+                        )
 
                 # Store total DC power
                 if dc_columns:
                     total_dc = results[dc_columns].sum(axis=1)
                     results[PVLibResultsColumns.DC.value] = total_dc
+                    logger.debug(
+                        f"Successfully extracted DC power for {len(dc_columns)} arrays"
+                    )
         except Exception as e:
-            logger.warning(f"Could not process generic DC results: {e}")
+            logger.debug(
+                f"Could not process generic DC results: {e} "
+                "(AC power calculation continues normally)"
+            )
 
     def get_system_capacity(self) -> Dict[str, float]:
         """

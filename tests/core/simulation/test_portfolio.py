@@ -9,9 +9,9 @@ This module tests portfolio functionality including:
 - Portfolio diversity metrics
 
 All tests use local CSV files for weather and price data, no API calls.
+All tests use the unified configuration system for consistency.
 """
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -34,29 +34,28 @@ from app.core.simulation.pvlib_models import PVLibModel
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.simulation.weather_provider import CSVWeatherProvider
 from app.core.utils.location import GeospatialLocation
+from tests.config import test_config
 
 
 # Shared fixtures for all test classes
 @pytest.fixture
-def portfolio_config_data():
-    """Load portfolio configuration from JSON file."""
-    config_dir = Path(__file__).parent.parent.parent / "config"
-    config_path = config_dir / "portfolio_multi_plant_config.json"
-    with open(config_path, "r") as f:
-        data = json.load(f)
-    return data
+def test_portfolio():
+    """Create a test portfolio using unified configuration."""
+    return test_config.create_test_portfolio()
 
 
 @pytest.fixture
-def portfolio_config(portfolio_config_data):
-    """Standard portfolio configuration for testing."""
-    return PortfolioConfiguration(**portfolio_config_data["portfolio_config"])
+def portfolio_config():
+    """Get portfolio configuration from unified config."""
+    config_data = test_config.load_config_file("test_portfolio_config.json")
+    return PortfolioConfiguration.model_validate(config_data["portfolio_config"])
 
 
 @pytest.fixture
-def plant_configs(portfolio_config_data):
-    """Load plant configurations from JSON file."""
-    return portfolio_config_data["plants"]
+def plant_configs():
+    """Load plant configurations from unified config."""
+    config_data = test_config.load_config_file("test_portfolio_config.json")
+    return config_data["plants"]
 
 
 @pytest.fixture
@@ -162,10 +161,26 @@ class TestPortfolioCreation:
         assert len(portfolio.plants) == 3
 
         # Verify all plants are properly initialized
+        plants_with_batteries = 0
+        plants_without_batteries = 0
+
         for plant in portfolio.plants:
             assert plant.pv_model is not None
-            assert len(plant.batteries) > 0
             assert plant.revenue_calculator is not None
+
+            # Count plants with and without batteries
+            if len(plant.batteries) > 0:
+                plants_with_batteries += 1
+            else:
+                plants_without_batteries += 1
+
+        # Verify our expected configuration: 2 with batteries, 1 without
+        assert plants_with_batteries == 2, (
+            f"Expected 2 plants with batteries, got {plants_with_batteries}"
+        )
+        assert plants_without_batteries == 1, (
+            f"Expected 1 plant without batteries, got {plants_without_batteries}"
+        )
 
     @pytest.mark.asyncio
     async def test_portfolio_data_loading(self, weather_provider, price_provider):

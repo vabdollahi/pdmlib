@@ -5,34 +5,28 @@ This demonstrates a solar producer selling power at real wholesale
 electricity prices, with automatic provider selection by market region
 (CAISO for California, IESO for Ontario). It includes the Duck Curve
 effect where solar can drive prices negative.
+
+Now uses the unified configuration system for consistent setup.
 """
 
 import asyncio
-import json
 import os
-from pathlib import Path
 
+from app.config import config_manager
 from app.core.simulation.price_provider import (
     PriceProviderConfig,
     create_price_provider,
 )
 from app.core.simulation.price_regions import PriceMarketRegion
-from app.core.simulation.pv_model import PVModel
-from app.core.simulation.pvlib_models import PVLibModel
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
-from app.core.simulation.weather_provider import WeatherProvider
-from app.core.utils.date_handling import TimeInterval
 from app.core.utils.location import GeospatialLocation
 from app.core.utils.logging import get_logger
-from app.core.utils.storage import DataStorage
 
 logger = get_logger("main")
 
-## PriceProviderConfig now lives in app.core.simulation.price_provider
-
 
 async def create_solar_system():
-    """Set up solar farm and market data providers with auto region selection."""
+    """Set up solar farm and market data providers using unified configuration."""
 
     # Region override via env: MARKET_REGION=CAISO|IESO (default CAISO)
     region_name = os.getenv("MARKET_REGION", "CAISO").upper().strip()
@@ -52,12 +46,9 @@ async def create_solar_system():
         org_asset = ("SolarRevenue", "HOEP_Data")
 
     # Centralized date configuration for consistent time ranges
-    # Use a known historical date for demonstration (data should be available)
-    # Using July 2025 - well into the historical archive
     from datetime import datetime
 
     # Define analysis period as datetime objects (single source of truth)
-    # Use exact 24-hour period to avoid rounding issues
     analysis_start = datetime(2025, 7, 15, 0, 0, 0)  # Start at midnight
     analysis_end = datetime(2025, 7, 16, 0, 0, 0)  # End at midnight next day
 
@@ -98,6 +89,8 @@ async def create_solar_system():
     except Exception as e:
         logger.warning(f"{market_region} provider failed: {e}")
         logger.warning("Falling back to CSV test data...")
+        from pathlib import Path
+
         csv_path = (
             Path(__file__).parent.parent / "tests" / "data" / "sample_price_data.csv"
         )
@@ -106,34 +99,17 @@ async def create_solar_system():
         )
         logger.info("Using CSV test data")
 
-    # Load solar farm configuration (10 MW system)
-    config_path = (
-        Path(__file__).parent.parent
-        / "tests"
-        / "config"
-        / "solar_farm_10mw_pv_only.json"
-    )
-    with open(config_path, "r") as f:
-        pv_config = json.load(f)
-
-    # Create weather data provider matching the selected location
-    # Note: By default, fetches only GHI + temperature for API cost optimization
-    # Set fetch_all_radiation=True for maximum accuracy (higher API costs)
-    weather_provider = WeatherProvider(
+    # Create PV model using unified configuration with API weather provider
+    # Use the simple solar farm factory for 10 MW capacity with API data caching
+    logger.info("Creating solar farm using unified configuration...")
+    pv_model = config_manager.create_simple_solar_farm(
+        capacity_mw=10.0,
         location=location,
+        use_api_weather=True,  # Use API weather provider with caching
         start_date=start_date,
         end_date=end_date,
-        organization="SolarRevenue",
-        asset="Weather",
-        interval=TimeInterval.HOURLY,
-        storage=DataStorage(base_path="data"),
-        # fetch_all_radiation=False,  # Default: optimized (GHI + temp only)
-        # fetch_all_radiation=True,   # Alternative: full radiation (higher cost)
     )
-
-    # Create PV system model
-    pvlib_model = PVLibModel(**pv_config)
-    pv_model = PVModel(pv_config=pvlib_model, weather_provider=weather_provider)
+    logger.info("✓ Solar farm ready")
 
     return price_provider, pv_model, analysis_start, analysis_end
 
@@ -152,7 +128,8 @@ async def main():
 
         # Create revenue calculator
         calculator = SolarRevenueCalculator(
-            price_provider=price_provider, pv_model=pv_model
+            price_provider=price_provider,
+            pv_model=pv_model,  # type: ignore
         )
 
         logger.info("Calculating Solar Revenue...")
