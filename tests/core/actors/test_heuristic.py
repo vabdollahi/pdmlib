@@ -2,7 +2,7 @@
 Tests for the heuristic actor system.
 
 These tests verify that the BasicHeuristic agent can work with
-the enhanced observation system.
+the observation system.
 """
 
 import datetime
@@ -17,7 +17,7 @@ from tests.config import test_config
 
 
 class TestHeuristicActor:
-    """Test the BasicHeuristic actor with the enhanced observation system."""
+    """Test the BasicHeuristic actor with the observation system."""
 
     def test_basic_heuristic_creation(self):
         """Test creating a BasicHeuristic agent."""
@@ -29,8 +29,8 @@ class TestHeuristicActor:
         assert heuristic.soc_buffer == 0.1
 
     @pytest.mark.asyncio
-    async def test_heuristic_with_enhanced_observations(self):
-        """Test heuristic agent with enhanced observations."""
+    async def test_heuristic_with_observations(self):
+        """Test heuristic agent with observations."""
         # Get observation factory from environment
         portfolios = [test_config.create_test_portfolio()]
         from app.core.environment.observations import ObservationFactory
@@ -47,35 +47,35 @@ class TestHeuristicActor:
         # Get current timestamp
         timestamp = datetime.datetime.now(datetime.timezone.utc)
 
-        # Get enhanced observations
-        enhanced_obs = await obs_factory.create_enhanced_observation(timestamp)
+        # Get observations
+        observation = await obs_factory.create_observation(timestamp)
 
-        # Verify enhanced observation structure
-        assert "market" in enhanced_obs
-        assert "portfolios" in enhanced_obs
-        assert "market_data" in enhanced_obs["market"]
+        # Verify observation structure
+        assert "market" in observation
+        assert "portfolios" in observation
+        assert "market_data" in observation["market"]
 
         # Check that market observations contain required fields
-        market_data = enhanced_obs["market"]["market_data"]
+        market_data = observation["market"]["market_data"]
         assert ObservationName.CURRENT_PRICE in market_data
         assert ObservationName.PRICE_FORECAST in market_data
 
         # Check portfolio structure
-        assert len(enhanced_obs["portfolios"]) > 0
-        portfolio_name = list(enhanced_obs["portfolios"].keys())[0]
-        portfolio_obs = enhanced_obs["portfolios"][portfolio_name]
+        assert len(observation["portfolios"]) > 0
+        portfolio_name = list(observation["portfolios"].keys())[0]
+        portfolio_obs = observation["portfolios"][portfolio_name]
 
         # Check plant observations
         assert len(portfolio_obs) > 0
         plant_name = list(portfolio_obs.keys())[0]
         plant_obs = portfolio_obs[plant_name]
 
-        # Verify plant observations contain enhanced fields
+        # Verify plant observations contain fields
         assert ObservationName.AC_POWER_GENERATION_POTENTIAL in plant_obs
         assert ObservationName.BATTERY_STATE_OF_CHARGE in plant_obs
 
         # Test heuristic action
-        action = heuristic.get_action(enhanced_obs, timestamp, obs_factory)
+        action = heuristic.get_action(observation, timestamp, obs_factory)
 
         # Verify action structure
         assert isinstance(action, dict)

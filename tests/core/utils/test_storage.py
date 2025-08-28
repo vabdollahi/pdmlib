@@ -201,9 +201,9 @@ def test_storage_with_regional_location(storage):
     assert df_read.iloc[0]["price"] == 100
 
 
-def test_enhanced_caching_behavior(storage):
+def test_caching_behavior(storage):
     """
-    Tests the enhanced caching behavior with raw vs processed data separation
+    Tests the caching behavior with raw vs processed data separation
     and portfolio context awareness.
     """
     location = GeospatialLocation(latitude=40.0, longitude=-110.0)

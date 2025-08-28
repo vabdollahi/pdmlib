@@ -97,35 +97,15 @@ class PowerManagementEnvironment(gym.Env):
 
     def _create_observation_space(self) -> gym.spaces.Box:
         """Create observation space specification for gymnasium compatibility."""
-        try:
-            # Get actual observation to determine dimension
-            dummy_observation = asyncio.run(
-                self.observation_factory.create_observation(self.timestamp)
-            )
-            flattened_obs = flatten_observation(dummy_observation)
-            obs_dim = len(flattened_obs)
-
-            observation_space = gym.spaces.Box(
-                low=-10.0,
-                high=10.0,
-                shape=(obs_dim,),
-                dtype=np.float32,
-            )
-
-            logger.info(f"Created observation space with dimension {obs_dim}")
-            return observation_space
-
-        except Exception as e:
-            logger.error(f"Error creating observation space: {e}")
-            # Use calculated dimension as fallback
-            calculated_dim = self._calculate_observation_dimension()
-            logger.warning(f"Using calculated dimension {calculated_dim} as fallback")
-            return gym.spaces.Box(
-                low=-10.0,
-                high=10.0,
-                shape=(calculated_dim,),
-                dtype=np.float32,
-            )
+        # Avoid triggering data fetches/simulations here. Use the calculated dimension.
+        calculated_dim = self._calculate_observation_dimension()
+        logger.info(f"Created observation space with dimension {calculated_dim}")
+        return gym.spaces.Box(
+            low=-10.0,
+            high=10.0,
+            shape=(calculated_dim,),
+            dtype=np.float32,
+        )
 
     def _calculate_observation_dimension(self) -> int:
         """Calculate the observation dimension based on portfolio configuration."""

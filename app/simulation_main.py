@@ -213,16 +213,14 @@ def main():
         )
 
         try:
-            # Get enhanced observation for actor (this is async)
+            # Get observation for actor (this is async)
             import asyncio
 
-            enhanced_obs = asyncio.run(
-                env.observation_factory.create_enhanced_observation(env.timestamp)
-            )
-            print(f"    Enhanced observation available: {len(enhanced_obs)} categories")
+            obs = asyncio.run(env.observation_factory.create_observation(env.timestamp))
+            print(f"    Observation available: {len(obs)} categories")
 
-            # Print enhanced observation details
-            for category, data in enhanced_obs.items():
+            # Print observation details
+            for category, data in obs.items():
                 item_count = len(data) if hasattr(data, "__len__") else "N/A"
                 print(f"      {category}: {type(data)} with {item_count} items")
 
@@ -232,8 +230,8 @@ def main():
                         if "price" in key.lower():
                             print(f"        {key}: {type(value)}")
 
-            # Get action from actor using enhanced observations
-            actor_action = actor.get_action(enhanced_obs, env.timestamp)
+            # Get action from actor using observations
+            actor_action = actor.get_action(obs, env.timestamp)
             print(f"    Actor decision: {len(actor_action)} portfolios")
 
             # For demo, show some details about actor action
@@ -251,14 +249,35 @@ def main():
                         print(f"        {plant_name}: {plant_action}")
 
         except Exception as e:
-            print(f"    Error getting enhanced observation or actor action: {e}")
-            enhanced_obs = {}
+            print(f"    Error getting observation or actor action: {e}")
+            obs = {}
             actor_action = {}
 
         # Convert actor action to environment action if needed
         if isinstance(actor_action, dict) and actor_action:
-            # For demo, convert to numpy array (this would need proper mapping)
-            gym_action = np.array([0.5, 0.3])  # Placeholder conversion
+            # Simple mapping: extract first valid plant target
+            gym_action = []
+            for portfolio_name, plants_dict in actor_action.items():
+                if isinstance(plants_dict, dict):
+                    for plant_name, plant_action in plants_dict.items():
+                        if isinstance(plant_action, dict):
+                            # Get the most appropriate target value
+                            target = plant_action.get(
+                                "ac_power_generation_target_mw",
+                                plant_action.get("net_power_target_mw", 0.0),
+                            )
+                        else:
+                            target = float(plant_action) if plant_action else 0.0
+
+                        # Simple normalization: assume targets are reasonable
+                        normalized = np.clip(target / 10.0, -1.0, 1.0)
+                        gym_action.append(normalized)
+
+            # Ensure we have the right number of actions
+            action_len = env.action_space.shape[0] if env.action_space.shape else 2
+            while len(gym_action) < action_len:
+                gym_action.append(0.0)
+            gym_action = np.array(gym_action[:action_len], dtype=np.float32)
         else:
             gym_action = env.action_space.sample()  # Use random action as fallback
 

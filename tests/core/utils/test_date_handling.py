@@ -1,5 +1,5 @@
 """
-Tests for the enhanced date and datetime handling utilities.
+Tests for the date and datetime handling utilities.
 """
 
 from datetime import date, datetime, time

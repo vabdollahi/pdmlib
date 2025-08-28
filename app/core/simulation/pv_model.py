@@ -117,12 +117,12 @@ class PVModel(BaseModel):
             storage=storage,
             pv_model=self,
         )
-        logger.info(f"PV caching enabled for {organization}/{asset}")
+        logger.debug(f"PV caching enabled for {organization}/{asset}")
 
     def disable_caching(self) -> None:
         """Disable caching for this PV model."""
         self._cached_provider = None
-        logger.info("PV caching disabled")
+        logger.debug("PV caching disabled")
 
     @property
     def is_caching_enabled(self) -> bool:
@@ -141,14 +141,32 @@ class PVModel(BaseModel):
         """
         # Use cached provider if available
         if self._cached_provider and not force_refresh:
-            logger.info("Using cached PV generation data")
+            logger.debug("Using cached PV generation data")
             return await self._cached_provider.get_data(force_refresh=False)
         elif self._cached_provider and force_refresh:
-            logger.info("Force refresh requested, bypassing cache")
+            logger.debug("Force refresh requested, bypassing cache")
             return await self._cached_provider.get_data(force_refresh=True)
         else:
             # Run simulation without caching
             return await self._run_simulation_uncached()
+
+    def set_cached_range(self, start_dt, end_dt) -> None:
+        """Update the cached provider's date range if caching is enabled.
+
+        Args:
+            start_dt: datetime for start (inclusive)
+            end_dt: datetime for end (inclusive)
+        """
+        if not self._cached_provider:
+            return
+        try:
+            # Format to provider's expected string format
+            start_str = pd.to_datetime(start_dt).strftime("%Y-%m-%d %H:%M:%S")
+            end_str = pd.to_datetime(end_dt).strftime("%Y-%m-%d %H:%M:%S")
+            self._cached_provider.start_date = start_str  # type: ignore[attr-defined]
+            self._cached_provider.end_date = end_str  # type: ignore[attr-defined]
+        except Exception as e:
+            logger.debug(f"Could not update cached range: {e}")
 
     async def _run_simulation_uncached(self) -> pd.DataFrame:
         """

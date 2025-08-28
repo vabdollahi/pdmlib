@@ -181,7 +181,7 @@ class CAISORateLimitedClient(BaseAPIClient):
     Implements CAISO's official rate limits:
     - Global limit: 30 requests per second (1800 per minute)
     - Service-specific enforcement periods of 5-30 seconds
-    - Enhanced retry logic with exponential backoff for 429 errors
+    - Retry logic with exponential backoff for 429 errors
     """
 
     def __init__(

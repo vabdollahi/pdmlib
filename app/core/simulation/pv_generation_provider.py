@@ -50,22 +50,21 @@ class PVGenerationProvider(BaseProvider):
             return "default"
 
     def _get_cache_key_suffix(self) -> str:
-        """
-        Generate cache key suffix including PV configuration.
-
-        Returns:
-            Cache key suffix in format: pv_gen_{config_hash}_{lat}_{lon}
-        """
+        """Generate cache key suffix including PV configuration."""
         pv_hash = self._get_pv_config_hash()
 
-        # Handle different location types - only GeospatialLocation has lat/lon
-        if hasattr(self.location, "latitude") and hasattr(self.location, "longitude"):
-            lat = round(self.location.latitude, 4)  # Round to ~10m precision
-            lon = round(self.location.longitude, 4)
+        # Handle different location types
+        if (
+            hasattr(self, "location")
+            and hasattr(self.location, "latitude")
+            and hasattr(self.location, "longitude")
+        ):
+            lat = round(float(getattr(self.location, "latitude")), 4)
+            lon = round(float(getattr(self.location, "longitude")), 4)
             return f"pv_gen_{pv_hash}_{lat}_{lon}"
         else:
-            # For non-geospatial locations, use path string representation
-            location_str = self.location.to_path_string()
+            # For non-geospatial locations
+            location_str = getattr(self.location, "to_path_string", str)(self.location)
             return f"pv_gen_{pv_hash}_{location_str}"
 
     async def _fetch_range(self, start_date: str, end_date: str) -> pd.DataFrame:
@@ -84,11 +83,23 @@ class PVGenerationProvider(BaseProvider):
         """
         logger.info(f"Running PV simulation for {start_date} to {end_date}")
 
-        # Update weather provider dates to match requested range if possible
-        if hasattr(self.pv_model.weather_provider, "start_date"):
-            self.pv_model.weather_provider.start_date = start_date  # type: ignore
-        if hasattr(self.pv_model.weather_provider, "end_date"):
-            self.pv_model.weather_provider.end_date = end_date  # type: ignore
+        # Update weather provider range to match requested window
+        try:
+            set_range_fn = getattr(self.pv_model.weather_provider, "set_range", None)
+            if set_range_fn:
+                from app.core.utils.date_handling import parse_datetime_input
+
+                start_dt = parse_datetime_input(start_date)
+                end_dt = parse_datetime_input(end_date)
+                set_range_fn(start_dt, end_dt)
+
+            # Set legacy attributes if present
+            if hasattr(self.pv_model.weather_provider, "start_date"):
+                self.pv_model.weather_provider.start_date = start_date  # type: ignore
+            if hasattr(self.pv_model.weather_provider, "end_date"):
+                self.pv_model.weather_provider.end_date = end_date  # type: ignore
+        except Exception as e:
+            logger.debug(f"Could not set weather provider range: {e}")
 
         # Run the actual PVLib simulation
         try:

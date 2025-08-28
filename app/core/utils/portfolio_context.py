@@ -69,6 +69,10 @@ def is_test_environment() -> bool:
     """
     Check if we're running in a test environment.
     """
+    # Allow override to force caching in demos/examples
+    if os.environ.get("FORCE_CACHING", "").lower() in ("true", "1", "yes"):
+        return False
+
     # Check for common test environment indicators
     if "pytest" in os.environ.get("_", ""):
         return True
@@ -93,7 +97,7 @@ def should_use_unified_structure() -> bool:
     # Allow storage tests to test unified structure behavior
     if is_test_environment():
         test_file = os.environ.get("PYTEST_CURRENT_TEST", "")
-        if "test_storage" in test_file and "enhanced_caching" in test_file:
+        if "test_storage" in test_file and "caching" in test_file:
             return is_portfolio_context_active()
         return False
     return is_portfolio_context_active()

@@ -25,7 +25,7 @@ class ActionName(str, Enum):
     BATTERY_POWER_TARGET = "battery_power_target_mw"
     PV_CURTAILMENT_FACTOR = "pv_curtailment_factor"
 
-    # Enhanced action names for actors
+    # Action names for actors
     DC_POWER_GENERATION_TARGET = "dc_power_generation_target_mw"
     AC_POWER_GENERATION_TARGET = "ac_power_generation_target_mw"
 

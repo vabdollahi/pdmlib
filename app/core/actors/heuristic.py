@@ -57,7 +57,7 @@ class BasicHeuristic(Actor):
         Get optimal actions based on heuristic strategy.
 
         Args:
-            observation: Enhanced observation from environment
+            observation: Observation from environment
             observation_factory: Optional observation factory for additional data
             timestamp: Current timestamp
 

@@ -13,7 +13,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from typing_extensions import Protocol
 
 from app.core.simulation.battery_simulator import LinearBatterySimulator
@@ -165,6 +165,10 @@ class SolarBatteryPlant(BaseModel):
     _operation_mode: PlantOperationMode = PlantOperationMode.IDLE
     _current_timestamp: Optional[datetime.datetime] = None
     pv_cache_enabled: bool = Field(default=True, exclude=True)
+    # Simple in-memory cache of PV potential by timestamp
+    # to avoid duplicate work within a step
+    # Private attribute for intra-step PV potential cache
+    _pv_potential_cache: Dict[str, float] = PrivateAttr(default_factory=dict)
 
     def __init__(self, **data):
         """Initialize plant with validation."""
@@ -182,12 +186,12 @@ class SolarBatteryPlant(BaseModel):
                 self.pv_model.enable_caching(
                     storage=default_storage, organization=organization, asset=asset
                 )
-                logger.info(f"PV caching auto-enabled for plant '{self.config.name}'")
+                logger.debug(f"PV caching auto-enabled for plant '{self.config.name}'")
             except Exception as e:
                 logger.warning(f"Could not auto-enable PV caching: {e}")
                 self.pv_cache_enabled = False
 
-        logger.info(
+        logger.debug(
             f"Initialized solar-battery plant '{self.config.name}' with "
             f"{len(self.batteries)} batteries"
         )
@@ -250,7 +254,7 @@ class SolarBatteryPlant(BaseModel):
             storage=storage, organization=organization, asset=asset
         )
         self.pv_cache_enabled = True
-        logger.info(f"PV caching enabled for plant '{self.config.name}'")
+        logger.debug(f"PV caching enabled for plant '{self.config.name}'")
 
     def disable_pv_caching(self) -> None:
         """Disable PV generation caching for this plant."""
@@ -277,28 +281,61 @@ class SolarBatteryPlant(BaseModel):
             PV generation potential in MW
         """
         try:
+            # Check in-memory cache first for efficiency within same step
+            if not force_refresh:
+                cache_key = pd.Timestamp(timestamp).isoformat()
+                if cache_key in self._pv_potential_cache:
+                    return max(0.0, float(self._pv_potential_cache[cache_key]))
+
+            # Set day-scoped cache range to optimize data fetching
+            day_start = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = timestamp.replace(hour=23, minute=0, second=0, microsecond=0)
+            self.pv_model.set_cached_range(day_start, day_end)
+
             # Run PV simulation to get generation data (with caching support)
             pv_results = await self.pv_model.run_simulation(force_refresh=force_refresh)
 
-            # Find the closest timestamp
-            if timestamp in pv_results.index:
+            # Find the closest timestamp in results
+            ts = pd.Timestamp(timestamp)
+
+            # Ensure timezone compatibility for comparison
+            if isinstance(pv_results.index, pd.DatetimeIndex):
+                if pv_results.index.tz is not None and ts.tz is None:
+                    # Index has timezone, timestamp doesn't - localize timestamp
+                    ts = ts.tz_localize(pv_results.index.tz)
+                elif pv_results.index.tz is None and ts.tz is not None:
+                    # Index is naive, timestamp has timezone - convert to naive
+                    ts = ts.tz_localize(None)
+                elif pv_results.index.tz is not None and ts.tz is not None:
+                    # Both have timezones - convert to same timezone
+                    ts = ts.tz_convert(pv_results.index.tz)
+
+            if ts in pv_results.index:
                 generation_mw = (
-                    pv_results[PVLibResultsColumns.AC.value].loc[timestamp] / 1e6
+                    pv_results[PVLibResultsColumns.AC.value].loc[ts] / 1e6
                 )  # Convert W to MW
             else:
-                # Use nearest neighbor for timestamp not in index
+                # Use nearest neighbor interpolation
                 series = pv_results[PVLibResultsColumns.AC.value]
                 if not series.empty:
-                    # Find nearest timestamp
-                    idx = series.index.get_indexer([timestamp], method="nearest")[0]
-                    if idx != -1:
-                        generation_mw = series.iloc[idx] / 1e6
+                    idx_pos = series.index.get_indexer([ts], method="nearest")[0]
+                    if idx_pos != -1:
+                        generation_mw = series.iloc[idx_pos] / 1e6
                     else:
                         generation_mw = 0.0
                 else:
                     generation_mw = 0.0
 
-            return max(0.0, generation_mw)
+            generation_mw = max(0.0, generation_mw)
+
+            # Store in in-memory cache for reuse within same step
+            cache_key = pd.Timestamp(timestamp).isoformat()
+            # Keep cache bounded to prevent memory growth
+            if len(self._pv_potential_cache) > 1000:
+                self._pv_potential_cache.clear()
+            self._pv_potential_cache[cache_key] = float(generation_mw)
+
+            return generation_mw
 
         except Exception as e:
             logger.error(f"Error calculating PV generation potential: {e}")
@@ -347,7 +384,10 @@ class SolarBatteryPlant(BaseModel):
         return False
 
     async def get_available_power(
-        self, timestamp: datetime.datetime, interval_minutes: float = 60.0
+        self,
+        timestamp: datetime.datetime,
+        interval_minutes: float = 60.0,
+        pv_potential_mw: Optional[float] = None,
     ) -> Tuple[float, float]:
         """
         Get total available power generation and consumption capability.
@@ -363,8 +403,9 @@ class SolarBatteryPlant(BaseModel):
         if self.is_in_maintenance(timestamp):
             return 0.0, 0.0
 
-        # Get PV generation potential
-        pv_potential_mw = await self.get_pv_generation_potential(timestamp)
+        # Get PV generation potential (reuse if provided)
+        if pv_potential_mw is None:
+            pv_potential_mw = await self.get_pv_generation_potential(timestamp)
 
         # Get battery capabilities
         battery_charge_mw, battery_discharge_mw = self.get_battery_available_power(

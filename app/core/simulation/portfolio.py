@@ -229,11 +229,11 @@ class PowerPlantPortfolio(BaseModel):
 
             default_storage = DataStorage(base_path="data")
             self.enable_pv_caching(default_storage)
-            logger.info(f"PV caching auto-enabled for portfolio '{self.config.name}'")
+            logger.debug(f"PV caching auto-enabled for portfolio '{self.config.name}'")
         except Exception as e:
             logger.warning(f"Could not auto-enable PV caching for portfolio: {e}")
 
-        logger.info(
+        logger.debug(
             f"Initialized portfolio '{self.config.name}' with {len(self.plants)} plants"
         )
 
@@ -404,10 +404,19 @@ class PowerPlantPortfolio(BaseModel):
         enabled_count = 0
         for plant in self.plants:
             if hasattr(plant, "enable_pv_caching"):
+                # Skip if already enabled to avoid reconfiguring org/asset
+                try:
+                    if hasattr(plant, "pv_model") and getattr(
+                        plant.pv_model, "is_caching_enabled", False
+                    ):
+                        continue
+                except Exception:
+                    pass
+
                 plant.enable_pv_caching(storage)
                 enabled_count += 1
 
-        logger.info(
+        logger.debug(
             f"PV caching enabled for {enabled_count}/{len(self.plants)} plants "
             f"in portfolio '{self.config.name}'"
         )
