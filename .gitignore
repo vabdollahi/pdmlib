@@ -27,3 +27,6 @@ htmlcov/
 
 # cache
 .cache/
+
+# Results
+simulation_results

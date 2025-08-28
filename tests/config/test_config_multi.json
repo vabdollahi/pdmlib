@@ -1,0 +1,222 @@
+{
+  "start_date_time": "2025-07-15T08:00:00+00:00",
+  "end_date_time": "2025-07-15T18:00:00+00:00",
+  "interval_min": 60,
+  "historic_data_intervals": 6,
+  "forecast_data_intervals": 12,
+  "power_normalization_coefficient": 1000000,
+  "price_normalization_coefficient": 100.0,
+  "action_tolerance_percent": 0.01,
+  "smoothed_reward_parameter": 0.1,
+  "max_grid_purchase_mw": 50.0,
+  "grid_purchase_enabled": false,
+  "agent": {
+    "type": "BasicHeuristic",
+    "parameters": {
+      "max_lookahead_steps": 8,
+      "charge_threshold_ratio": 0.25,
+      "discharge_threshold_ratio": 0.75,
+      "soc_buffer": 0.05
+    },
+    "enabled": true,
+    "name": "test_heuristic"
+  },
+  "portfolios": [
+    {
+      "name": "Multi-Plant Test Portfolio",
+      "max_total_power_mw": 75.0,
+      "allow_grid_purchase": false,
+      "market": {
+        "prices": [
+          {
+            "type": "csv_file",
+            "name": "Sample Price Data",
+            "data": "tests/data/sample_price_data.csv"
+          }
+        ],
+        "weather": {
+          "type": "csv_file",
+          "data": "tests/data/sample_weather_data.csv"
+        }
+      },
+      "plants": [
+        {
+          "location": {
+            "name": "California_Plant",
+            "latitude": 34.0522,
+            "longitude": -118.2437,
+            "tz": "America/Los_Angeles",
+            "altitude": 100
+          },
+          "pv_systems": [
+            {
+              "inverters": {
+                "count": 3,
+                "database": "CECInverter",
+                "record": "SMA_America__SB5000US__240V_"
+              },
+              "pv_arrays": [
+                {
+                  "pv_modules": {
+                    "count": 20,
+                    "name": "Canadian Solar Array 1",
+                    "database": "CECMod",
+                    "record": "Canadian_Solar_Inc__CS5P_220M"
+                  },
+                  "array_setup": {
+                    "name": "Fixed Mount Array",
+                    "mount": {
+                      "type": "fixed_mount",
+                      "tilt_degrees": 28.0,
+                      "azimuth_degrees": 180.0
+                    },
+                    "number_of_strings": 1700,
+                    "temperature_model": {
+                      "database": "sapm",
+                      "record": "open_rack_glass_glass"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "batteries": [
+            {
+              "name": "Primary Battery 1",
+              "energy_capacity_mwh": 30.0,
+              "max_power_mw": 15.0,
+              "round_trip_efficiency": 0.87,
+              "initial_soc": 0.6,
+              "min_soc": 0.1,
+              "max_soc": 0.9
+            }
+          ],
+          "plant_config": {
+            "name": "California Plant",
+            "plant_id": "CP-001",
+            "max_net_power_mw": 25.0,
+            "min_net_power_mw": 0.0,
+            "enable_market_participation": true
+          }
+        },
+        {
+          "location": {
+            "name": "Arizona_Plant",
+            "latitude": 33.4484,
+            "longitude": -112.074,
+            "tz": "America/Phoenix",
+            "altitude": 331
+          },
+          "pv_systems": [
+            {
+              "inverters": {
+                "count": 4,
+                "database": "CECInverter",
+                "record": "Sungrow_Power_Supply_Co___Ltd___SG125HV__600V_"
+              },
+              "pv_arrays": [
+                {
+                  "pv_modules": {
+                    "count": 20,
+                    "name": "Canadian Solar Array 2",
+                    "database": "CECMod",
+                    "record": "Canadian_Solar_Inc__CS5P_220M"
+                  },
+                  "array_setup": {
+                    "name": "Single Axis Tracking Array",
+                    "mount": {
+                      "type": "single_axis",
+                      "axis_tilt_degrees": 0.0,
+                      "axis_azimuth_degrees": 180.0,
+                      "max_angle_degrees": 55.0,
+                      "backtrack": true,
+                      "gcr": 0.35
+                    },
+                    "number_of_strings": 2270,
+                    "temperature_model": {
+                      "database": "sapm",
+                      "record": "close_mount_glass_glass"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "batteries": [
+            {
+              "name": "Primary Battery 2",
+              "energy_capacity_mwh": 40.0,
+              "max_power_mw": 20.0,
+              "round_trip_efficiency": 0.85,
+              "initial_soc": 0.5,
+              "min_soc": 0.05,
+              "max_soc": 0.95
+            }
+          ],
+          "plant_config": {
+            "name": "Arizona Plant",
+            "plant_id": "AP-002",
+            "max_net_power_mw": 30.0,
+            "min_net_power_mw": 0.0,
+            "enable_market_participation": true
+          }
+        },
+        {
+          "location": {
+            "name": "Texas_Plant",
+            "latitude": 31.9686,
+            "longitude": -99.9018,
+            "tz": "America/Chicago",
+            "altitude": 300
+          },
+          "pv_systems": [
+            {
+              "inverters": {
+                "count": 2,
+                "database": "CECInverter",
+                "record": "SMA_America__SB5000US__240V_"
+              },
+              "pv_arrays": [
+                {
+                  "pv_modules": {
+                    "count": 20,
+                    "name": "Canadian Solar Array 3",
+                    "database": "CECMod",
+                    "record": "Canadian_Solar_Inc__CS5P_220M"
+                  },
+                  "array_setup": {
+                    "name": "Bifacial Fixed Mount Array",
+                    "mount": {
+                      "type": "fixed_mount",
+                      "tilt_degrees": 30.0,
+                      "azimuth_degrees": 180.0
+                    },
+                    "number_of_strings": 1500
+                  }
+                }
+              ]
+            }
+          ],
+          "batteries": [
+            {
+              "name": "Primary Battery 3",
+              "energy_capacity_mwh": 25.0,
+              "max_power_mw": 12.5,
+              "round_trip_efficiency": 0.88,
+              "initial_soc": 0.6,
+              "min_soc": 0.1,
+              "max_soc": 0.9
+            }
+          ],
+          "plant_config": {
+            "name": "Texas Plant",
+            "plant_id": "TP-003",
+            "max_net_power_mw": 20.0,
+            "min_net_power_mw": 0.0,
+            "enable_market_participation": true
+          }
+        }
+      ]
+    }
+  ]
+}

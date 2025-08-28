@@ -1,324 +1,133 @@
 """
-Comprehensive power management simulation example.
+Power Management Simulation with Complete Automation.
 
-This example demonstrates the full simulation workflow:
-1. Configuration-based environment creation
-2. Heuristic agent integration
-3. Observation handling and action execution
-4. Multi-step simulation loop with rewards
+This simulation_main.py demonstrates complete automation from JSON configuration
+to simulation execution with pre-calculated power profiles, unified market data,
+and agent-driven portfolio management.
 
-Example usage:
+Usage:
     uv run python -m app.simulation_main
+    uv run python -m app.simulation_main tests/config/test_config_simple.json
 """
 
-import numpy as np
+import asyncio
+import sys
+from pathlib import Path
 
-from app.core.actors import BasicHeuristic
-from app.core.environment.config import EnvironmentConfigFactory
-from app.core.environment.power_management_env import PowerManagementEnvironment
+from app.core.simulation.simulation_manager import create_simulation_from_json
 from app.core.utils.logging import get_logger
 
 logger = get_logger("simulation_main")
 
 
-def create_sample_configs():
-    """Create sample configuration dictionaries for testing."""
+async def main(config_file_path: str | None = None):
+    """
+    Main function demonstrating complete automated simulation workflow.
 
-    # Weather configuration (using CSV for deterministic testing)
-    weather_config = {
-        "type": "csv_file",
-        "name": "weather_data",
-        "data": "./tests/data/sample_weather_data.csv",
-    }
-
-    forecast_weather_config = {
-        "type": "csv_file",
-        "name": "weather_forecast",
-        "data": "./tests/data/sample_weather_data.csv",  # Same for demo
-    }
-
-    # PV system configuration
-    pv_config = {
-        "capacity_mw": 5.0,
-        "latitude": 37.7749,  # San Francisco
-        "longitude": -122.4194,
-        "tilt_angle": 30.0,
-        "azimuth_angle": 180.0,
-        "inverter_efficiency": 0.95,
-    }
-
-    # Battery configuration
-    battery_config = {
-        "capacity_mwh": 11.0,
-        "max_power_mw": 5.5,
-        "efficiency": 0.95,
-        "min_soc": 0.1,
-        "max_soc": 0.9,
-        "initial_soc": 0.5,
-    }
-
-    # Virtual plant configurations
-    virtual_plant_config_1 = {
-        "type": "pv",
-        "name": "plant1",
-        "plant_model": {
-            "weather_config": weather_config,
-            "forecast_weather_config": forecast_weather_config,
-            "pv_config": pv_config,
-        },
-        "battery": battery_config,
-        "max_ac_power_to_grid_w": 4_881_942,  # ~4.88 MW
-    }
-
-    virtual_plant_config_2 = {
-        "type": "pv",
-        "name": "plant2",
-        "plant_model": {
-            "weather_config": weather_config,
-            "forecast_weather_config": forecast_weather_config,
-            "pv_config": pv_config,
-        },
-        "battery": battery_config,
-        "max_ac_power_to_grid_w": 4_881_942,
-    }
-
-    # Market/price configuration
-    spot_price_config = {
-        "type": "csv_file",
-        "name": "price",
-        "data": "./tests/data/sample_price_data.csv",
-    }
-
-    lgc_price_config = {
-        "type": "csv_file",
-        "name": "lgc",
-        "data": "./tests/data/sample_price_data.csv",  # Same for demo
-    }
-
-    forecast_price_config = {
-        "type": "csv_file",
-        "name": "forecast_price",
-        "data": "./tests/data/sample_price_data.csv",  # Same for demo
-    }
-
-    market_config = {
-        "prices": [spot_price_config, lgc_price_config],
-        "forecast_prices": [forecast_price_config],
-        "ppa": None,
-        "fcas": None,
-        "combine_prices": False,
-    }
-
-    # Portfolio configuration
-    portfolio_config = {
-        "name": "sample_portfolio",
-        "plants": [virtual_plant_config_1, virtual_plant_config_2],
-        "market": market_config,
-        "combine_plants": True,
-    }
-
-    # Environment configuration
-    environment_config = {
-        "portfolios": [portfolio_config],
-        "start_date_time": "2025-07-15 08:00:00+00:00",
-        "end_date_time": "2025-07-15 18:00:00+00:00",
-        "interval_min": 60,  # 60-minute intervals (1 hour)
-        "historic_data_intervals": 4,  # 4 hours of history
-        "forecast_data_intervals": 8,  # 8 hours of forecast
-        "power_normalization_coefficient": 1e6,  # MW to W
-        "price_normalization_coefficient": 100.0,  # $/MWh normalization
-        "smoothed_reward_parameter": 0.1,
-        "action_tolerance_percent": 0.01,
-    }
-
-    # Simulation configuration
-    simulation_config = {
-        "solver": "basic_heuristic",
-        "max_lookahead_steps": 8,  # 8 hours at 1-hour intervals
-    }
-
-    return environment_config, simulation_config
-
-
-def main():
-    """Main simulation loop demonstrating the power management system."""
+    This achieves the ultimate goal: load JSON configuration, automatically create
+    simulation object with validation, pre-calculate power profiles, create market
+    object, and run agent-driven portfolio management simulation.
+    """
 
     print("Power Management Simulation")
-    print("=" * 60)
+    print("=" * 50)
+    print("Complete Automation: JSON → Simulation → Results")
+    print("=" * 50)  # Determine configuration file
+    if config_file_path:
+        config_path = Path(config_file_path)
+        print(f"Configuration file: {config_path}")
+    else:
+        # Use default test configuration with agent
+        config_path = (
+            Path(__file__).parent.parent
+            / "tests"
+            / "config"
+            / "test_config_simple.json"
+        )
+        print(f"Using default configuration: {config_path}")
 
-    # Create configurations
-    environment_config, simulation_config = create_sample_configs()
-
-    print("Configuration Summary:")
-    print(f"  Time range: {environment_config['start_date_time']} to")
-    print(f"              {environment_config['end_date_time']}")
-    print(f"  Interval: {environment_config['interval_min']} minutes")
-    print(f"  Historic intervals: {environment_config['historic_data_intervals']}")
-    print(f"  Forecast intervals: {environment_config['forecast_data_intervals']}")
-    print(f"  Portfolios: {len(environment_config['portfolios'])}")
-
-    # Create environment
-    print("\nCreating environment...")
-    try:
-        env_config = EnvironmentConfigFactory.create(environment_config)
-        env = PowerManagementEnvironment(config=env_config)
-        print("Environment created successfully")
-    except Exception as e:
-        print(f"Error creating environment: {e}")
+    if not config_path.exists():
+        print(f"Configuration file not found: {config_path}")
         return
 
-    # Display environment information
-    print("\nEnvironment Information:")
-    print(f"  Observation space: {env.observation_space}")
-    print(f"  Observation space shape: {env.observation_space.shape}")
-    print(f"  Action space: {env.action_space}")
-    print(f"  Action space shape: {env.action_space.shape}")
+    try:
+        # Step 1: Create and initialize complete simulation from JSON
+        print("\nInitializing automated simulation...")
+        simulation = await create_simulation_from_json(config_path)
+        print("Simulation initialized successfully!")
 
-    # Sample random action for demonstration
-    sample_action = env.action_space.sample()
-    print(f"  Sample random action: {sample_action}")
+        # Show initialization summary
+        print("\nInitialization Summary:")
+        print(f"   - Environment: {type(simulation.environment).__name__}")
+        print(f"   - Agent: {type(simulation.agent).__name__}")
 
-    # Create solver/actor
-    print(f"\nCreating {simulation_config['solver']} actor...")
-    if simulation_config["solver"] == "basic_heuristic":
-        actor = BasicHeuristic(
-            max_lookahead_steps=simulation_config["max_lookahead_steps"],
-            charge_threshold_ratio=0.3,
-            discharge_threshold_ratio=0.7,
-        )
-        print("BasicHeuristic actor created")
-    else:
-        raise ValueError(f"Unknown solver: {simulation_config['solver']}")
-
-    # Reset environment and get initial observation
-    print("\nResetting environment...")
-    observation, info = env.reset()
-    print(f"  Initial observation shape: {observation.shape}")
-    print(f"  Initial info: {info}")
-
-    # Run simulation steps
-    print("\nRunning simulation steps...")
-    total_reward = 0.0
-    step = 0
-
-    for step in range(2):  # Run 2 steps as example
-        print(f"\n  Step {step + 1}:")
-        print(f"    Current timestamp: {env.timestamp}")
-
-        # Show current observation values
-        print(f"    Current observation shape: {observation.shape}")
-        print(f"    Observation sample (first 10 values): {observation[:10]}")
-        print(
-            f"    Observation range: [{observation.min():.3f}, {observation.max():.3f}]"
-        )
-
-        try:
-            # Get observation for actor (this is async)
-            import asyncio
-
-            obs = asyncio.run(env.observation_factory.create_observation(env.timestamp))
-            print(f"    Observation available: {len(obs)} categories")
-
-            # Print observation details
-            for category, data in obs.items():
-                item_count = len(data) if hasattr(data, "__len__") else "N/A"
-                print(f"      {category}: {type(data)} with {item_count} items")
-
-                # Show market data if available
-                if category == "market" and hasattr(data, "items"):
-                    for key, value in data.items():
-                        if "price" in key.lower():
-                            print(f"        {key}: {type(value)}")
-
-            # Get action from actor using observations
-            actor_action = actor.get_action(obs, env.timestamp)
-            print(f"    Actor decision: {len(actor_action)} portfolios")
-
-            # For demo, show some details about actor action
-            for portfolio_name, portfolio_actions in actor_action.items():
-                print(f"      {portfolio_name}:")
-                for plant_name, plant_action in portfolio_actions.items():
-                    if isinstance(plant_action, dict):
-                        ac_target = plant_action.get("ac_power_generation_target_mw", 0)
-                        battery_target = plant_action.get("battery_power_target_mw", 0)
-                        print(
-                            f"        {plant_name}: AC={ac_target:.2f}MW, "
-                            f"Battery={battery_target:.2f}MW"
-                        )
-                    else:
-                        print(f"        {plant_name}: {plant_action}")
-
-        except Exception as e:
-            print(f"    Error getting observation or actor action: {e}")
-            obs = {}
-            actor_action = {}
-
-        # Convert actor action to environment action if needed
-        if isinstance(actor_action, dict) and actor_action:
-            # Simple mapping: extract first valid plant target
-            gym_action = []
-            for portfolio_name, plants_dict in actor_action.items():
-                if isinstance(plants_dict, dict):
-                    for plant_name, plant_action in plants_dict.items():
-                        if isinstance(plant_action, dict):
-                            # Get the most appropriate target value
-                            target = plant_action.get(
-                                "ac_power_generation_target_mw",
-                                plant_action.get("net_power_target_mw", 0.0),
-                            )
-                        else:
-                            target = float(plant_action) if plant_action else 0.0
-
-                        # Simple normalization: assume targets are reasonable
-                        normalized = np.clip(target / 10.0, -1.0, 1.0)
-                        gym_action.append(normalized)
-
-            # Ensure we have the right number of actions
-            action_len = env.action_space.shape[0] if env.action_space.shape else 2
-            while len(gym_action) < action_len:
-                gym_action.append(0.0)
-            gym_action = np.array(gym_action[:action_len], dtype=np.float32)
+        if simulation.market and simulation.market.price_providers:
+            print(
+                f"   - Market data providers: {len(simulation.market.price_providers)}"
+            )
         else:
-            gym_action = env.action_space.sample()  # Use random action as fallback
+            print("   - Market data providers: 0")
 
-        print(f"    Gym action: {gym_action}")
-        # Action space bounds would be shown here if needed
+        if simulation.environment_config and simulation.environment_config.portfolios:
+            print(f"   - Portfolios: {len(simulation.environment_config.portfolios)}")
 
-        # Step environment
-        try:
-            observation, reward, terminated, truncated, info = env.step(gym_action)
-            total_reward += reward
+            total_plants = sum(
+                len(p.plants) for p in simulation.environment_config.portfolios
+            )
+            print(f"   - Total plants: {total_plants}")
+        else:
+            print("   - Portfolios: 0")
+            print("   - Total plants: 0")
 
-            print(f"    Reward: {reward:.4f}")
-            print(f"    Terminated: {terminated}, Truncated: {truncated}")
-            print(f"    Info keys: {list(info.keys()) if info else 'None'}")
+        # Step 2: Run complete automated simulation
+        print("\nRunning automated simulation...")
+        print("   - Pre-calculated power profiles: Ready")
+        print("   - Market data pre-loaded: Ready")
+        print("   - Agent ready for decision making: Ready")
 
-            # Show portfolio info if available
-            if info and "Test Multi-Plant Portfolio" in info:
-                portfolio_info = info["Test Multi-Plant Portfolio"]
-                print(f"    Portfolio info type: {type(portfolio_info)}")
-                if isinstance(portfolio_info, dict):
-                    for key, value in portfolio_info.items():
-                        if isinstance(value, (int, float)):
-                            print(f"      {key}: {value:.3f}")
-                        else:
-                            print(f"      {key}: {type(value)}")
+        # Run simulation with limited steps for demonstration
+        results = await simulation.run_simulation(max_steps=5)
 
-            if terminated or truncated:
-                print("    Episode finished")
-                break
+        # Step 3: Display results
+        print("\nSimulation Results:")
+        print(f"   - Total steps executed: {results.total_steps}")
+        print(f"   - Total reward: {results.total_reward:.4f}")
+        print(f"   - Average reward per step: {results.average_reward_per_step:.4f}")
+        print(f"   - Simulation period: {results.start_time} to {results.end_time}")
 
-        except Exception as e:
-            print(f"    Error during step: {e}")
-            break
+        # Step 4: Save results
+        print("\nSaving results...")
+        output_file = results.save_to_file()
+        print(f"   - Results saved to: {output_file}")
 
-    print("\nSimulation Summary:")
-    print(f"  Total steps: {step + 1}")
-    print(f"  Total reward: {total_reward:.4f}")
-    print(f"  Average reward per step: {total_reward / (step + 1):.4f}")
+        print("\nComplete automation workflow finished successfully!")
+        print("\nAchieved Ultimate Goal:")
+        print("- JSON configuration → Automatic simulation object creation")
+        print("- Pydantic validation throughout pipeline")
+        print("- Automatic provider creation (weather + price)")
+        print("- Data loading and validation")
+        print("- Pre-calculated power generation profiles")
+        print("- Unified market object with price data")
+        print("- Agent-driven portfolio management")
+        print("- Complete results output")
 
-    print("\nSimulation complete!")
+    except Exception as e:
+        print(f"\nSimulation failed: {e}")
+        logger.error(f"Simulation error: {e}", exc_info=True)
+        return
+
+
+def run_sync():
+    """Synchronous wrapper for the async main function."""
+    config_file = sys.argv[1] if len(sys.argv) > 1 else None
+
+    try:
+        asyncio.run(main(config_file))
+    except KeyboardInterrupt:
+        print("\n🛑 Simulation interrupted by user")
+    except Exception as e:
+        print(f"\n💥 Unexpected error: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    run_sync()

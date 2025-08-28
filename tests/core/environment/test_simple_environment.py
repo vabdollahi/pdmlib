@@ -7,16 +7,33 @@ All tests use CSV providers to avoid external API calls.
 
 import numpy as np
 
+from app.core.environment.config import create_environment_config_from_json
+from app.core.environment.power_management_env import PowerManagementEnvironment
 from tests.config import test_config
 
 
 class TestSimpleEnvironment:
     """Test the PowerManagementEnvironment with basic functionality."""
 
+    def _create_test_environment(self):
+        """Create test environment using spec-driven configuration."""
+        config = create_environment_config_from_json(test_config.environment_spec_path)
+        return PowerManagementEnvironment(config=config)
+
+    def _get_test_portfolio(self):
+        """Get the first portfolio from the test configuration."""
+        config = create_environment_config_from_json(test_config.environment_spec_path)
+        return config.portfolios[0]
+
+    def _get_test_plant_with_battery(self):
+        """Get the first plant (with battery) from the test configuration."""
+        portfolio = self._get_test_portfolio()
+        return portfolio.plants[0]  # First plant has a battery
+
     def test_basic_environment_creation(self):
         """Test creating a basic environment with minimal configuration."""
         # Use unified config to create test environment
-        env = test_config.create_test_environment()
+        env = self._create_test_environment()
 
         # Test basic properties
         assert env.timestamp.hour == 8
@@ -48,7 +65,7 @@ class TestSimpleEnvironment:
     def test_environment_reset_and_step(self):
         """Test basic environment reset and step operations."""
         # Use unified config to ensure CSV providers
-        env = test_config.create_test_environment()
+        env = self._create_test_environment()
 
         # Test reset
         observation, info = env.reset()
@@ -73,7 +90,7 @@ class TestSimpleEnvironment:
     def test_action_conversion_constraints(self):
         """Test that action conversion respects plant constraints."""
         # Use unified config to get a test plant
-        plant = test_config.create_test_plant_with_battery_1()
+        plant = self._get_test_plant_with_battery()
 
         # Verify that plant constraints are properly configured
         min_power = plant.config.min_net_power_mw
@@ -86,7 +103,7 @@ class TestSimpleEnvironment:
     def test_grid_purchase_configuration(self):
         """Test the grid purchase configuration functionality."""
         # Use the unified test portfolio to test the basic configuration
-        portfolio = test_config.create_test_portfolio()
+        portfolio = self._get_test_portfolio()
 
         # Check that the portfolio has the expected default configuration
         # Our unified config should have allow_grid_purchase as False by default

@@ -31,9 +31,12 @@ class TestHeuristicActor:
     @pytest.mark.asyncio
     async def test_heuristic_with_observations(self):
         """Test heuristic agent with observations."""
-        # Get observation factory from environment
-        portfolios = [test_config.create_test_portfolio()]
+        # Get observation factory from environment using spec-driven config
+        from app.core.environment.config import create_environment_config_from_json
         from app.core.environment.observations import ObservationFactory
+
+        config = create_environment_config_from_json(test_config.environment_spec_path)
+        portfolios = config.portfolios
 
         obs_factory = ObservationFactory(
             portfolios=portfolios,

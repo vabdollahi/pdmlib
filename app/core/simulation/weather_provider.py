@@ -219,18 +219,18 @@ class CSVWeatherProvider(BaseWeatherProvider):
             # Read CSV file
             df = pd.read_csv(self.file_path)
 
-            # Ensure datetime index
+            # Ensure datetime index with UTC timezone
             if "timestamp" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
                 df.set_index("timestamp", inplace=True)
             elif WeatherColumns.DATE_TIME.value in df.columns:
                 df[WeatherColumns.DATE_TIME.value] = pd.to_datetime(
-                    df[WeatherColumns.DATE_TIME.value]
+                    df[WeatherColumns.DATE_TIME.value], utc=True
                 )
                 df.set_index(WeatherColumns.DATE_TIME.value, inplace=True)
             else:
                 # Assume first column is datetime
-                df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
+                df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0], utc=True)
                 df.set_index(df.columns[0], inplace=True)
 
             # Filter by date range (if any was set), aligning timezone awareness

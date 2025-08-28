@@ -185,7 +185,24 @@ class CSVPriceProvider(BasePriceProvider):
 
             # Filter by date range if set_range was called
             if hasattr(self, "start_time") and hasattr(self, "end_time"):
-                mask = (df.index >= self.start_time) & (df.index <= self.end_time)
+                # Convert to pandas Timestamps ensuring UTC timezone
+                if getattr(self.start_time, "tzinfo", None) is not None:
+                    # Already timezone-aware, convert directly
+                    start_ts = pd.Timestamp(self.start_time).tz_convert("UTC")
+                    end_ts = pd.Timestamp(self.end_time).tz_convert("UTC")
+                else:
+                    # Timezone-naive, localize to UTC
+                    start_ts = pd.Timestamp(self.start_time, tz="UTC")
+                    end_ts = pd.Timestamp(self.end_time, tz="UTC")
+
+                # Ensure df.index is also timezone-aware UTC
+                if isinstance(df.index, pd.DatetimeIndex):
+                    if df.index.tz is None:
+                        df.index = df.index.tz_localize("UTC")
+                    elif str(df.index.tz) != "UTC":
+                        df.index = df.index.tz_convert("UTC")
+
+                mask = (df.index >= start_ts) & (df.index <= end_ts)
                 return df[mask].reset_index()
 
             return df.reset_index()
@@ -204,8 +221,9 @@ class CSVPriceProvider(BasePriceProvider):
             # Sort and index by timestamp
             if PriceColumns.TIMESTAMP.value in df.columns:
                 df = df.sort_values(PriceColumns.TIMESTAMP.value)
+                # Force UTC timezone parsing
                 df[PriceColumns.TIMESTAMP.value] = pd.to_datetime(
-                    df[PriceColumns.TIMESTAMP.value]
+                    df[PriceColumns.TIMESTAMP.value], utc=True
                 )
                 df = df.set_index(PriceColumns.TIMESTAMP.value)
             return df

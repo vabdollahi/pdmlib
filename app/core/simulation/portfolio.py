@@ -16,7 +16,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Protocol
 
-from app.core.simulation.plant import Plant, SolarBatteryPlant
+from app.core.simulation.plant import Plant
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.utils.logging import get_logger
 
@@ -890,84 +890,6 @@ class PowerPlantPortfolio(BaseModel):
         )
 
         return combined_portfolio
-
-
-# -----------------------------------------------------------------------------
-# Factory and Helper Functions
-# -----------------------------------------------------------------------------
-
-
-class PortfolioFactory:
-    """Factory for creating power plant portfolio instances."""
-
-    @staticmethod
-    def create_solar_portfolio(
-        name: str,
-        plants: List[SolarBatteryPlant],
-        strategy: PortfolioStrategy = PortfolioStrategy.BALANCED,
-        revenue_calculator: Optional[SolarRevenueCalculator] = None,
-        portfolio_id: Optional[str] = None,
-    ) -> PowerPlantPortfolio:
-        """
-        Create a solar plant portfolio with standard configuration.
-
-        Args:
-            name: Portfolio name
-            plants: List of solar-battery plants
-            strategy: Portfolio optimization strategy
-            revenue_calculator: Optional revenue calculation model
-            portfolio_id: Optional unique portfolio identifier
-
-        Returns:
-            Configured PowerPlantPortfolio instance
-        """
-        if not plants:
-            raise ValueError("Portfolio must contain at least one plant")
-
-        config = PortfolioConfiguration(
-            name=name,
-            portfolio_id=portfolio_id,
-            strategy=strategy,
-            min_operating_plants=min(len(plants), 1),
-        )
-
-        return PowerPlantPortfolio(
-            config=config,
-            plants=plants,
-            revenue_calculator=revenue_calculator,
-        )
-
-    @staticmethod
-    def create_diversified_portfolio(
-        name: str,
-        plants: List[Plant],
-        max_risk: float = 0.2,
-        portfolio_id: Optional[str] = None,
-    ) -> PowerPlantPortfolio:
-        """
-        Create a risk-diversified portfolio.
-
-        Args:
-            name: Portfolio name
-            plants: List of plants with different characteristics
-            max_risk: Maximum portfolio risk level
-            portfolio_id: Optional unique portfolio identifier
-
-        Returns:
-            Configured PowerPlantPortfolio with risk minimization strategy
-        """
-        config = PortfolioConfiguration(
-            name=name,
-            portfolio_id=portfolio_id,
-            strategy=PortfolioStrategy.RISK_MINIMIZATION,
-            max_portfolio_risk=max_risk,
-            diversification_weight=0.6,  # Higher weight on diversification
-        )
-
-        return PowerPlantPortfolio(
-            config=config,
-            plants=plants,
-        )
 
 
 # Type aliases

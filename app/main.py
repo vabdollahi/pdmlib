@@ -11,17 +11,21 @@ Now uses the unified configuration system for consistent setup.
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
-from app.config import config_manager
 from app.core.simulation.price_provider import (
     PriceProviderConfig,
     create_price_provider,
 )
 from app.core.simulation.price_regions import PriceMarketRegion
+from app.core.simulation.pv_model import PVModel
+from app.core.simulation.pvlib_models import PVLibModel
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
+from app.core.simulation.weather_provider import create_open_meteo_provider
+from app.core.utils.date_handling import TimeInterval
 from app.core.utils.location import GeospatialLocation
 from app.core.utils.logging import get_logger
+from app.core.utils.storage import DataStorage
 
 logger = get_logger("main")
 
@@ -46,9 +50,9 @@ async def create_solar_system():
         location = GeospatialLocation(latitude=43.65107, longitude=-79.347015)
         org_asset = ("SolarRevenue", "HOEP_Data")
 
-    # Define simulation time range (24-hour simulation starting at 2025-07-15)
-    start_time = datetime(2025, 7, 15, 0, 0, 0)
-    end_time = datetime(2025, 7, 15, 23, 59, 59)
+    # Define simulation time range (24-hour simulation starting at 2025-07-15 UTC)
+    start_time = datetime(2025, 7, 15, 0, 0, 0, tzinfo=timezone.utc)
+    end_time = datetime(2025, 7, 15, 23, 59, 59, tzinfo=timezone.utc)
 
     # Get time range strings for provider initialization
     start_date = start_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -82,7 +86,7 @@ async def create_solar_system():
 
         if isinstance(price_provider, CAISOPriceProvider):
             logger.info(f"CAISO Pricing Node: {price_provider.region}")
-        logger.info("✓ Price provider ready")
+        logger.info("Price provider ready")
 
     except Exception as e:
         logger.warning(f"{market_region} provider failed: {e}")
@@ -97,17 +101,78 @@ async def create_solar_system():
         )
         logger.info("Using CSV test data")
 
-    # Create PV model using unified configuration with API weather provider
-    # Use the simple solar farm factory for 10 MW capacity with API data caching
-    logger.info("Creating solar farm using unified configuration...")
-    pv_model = config_manager.create_simple_solar_farm(
-        capacity_mw=10.0,
+    # Create PV model using direct PVLib configuration
+    logger.info("Creating solar farm using direct PVLib configuration...")
+
+    # Create simple 10 MW solar farm configuration
+    simple_config = {
+        "location": {
+            "name": "Demo_Solar_Farm",
+            "latitude": location.latitude,
+            "longitude": location.longitude,
+            "tz": "America/Los_Angeles",
+            "altitude": 100,
+        },
+        "pv_systems": [
+            {
+                "inverters": {
+                    "count": 2,  # 10MW / 5MW per inverter
+                    "database": "CECInverter",
+                    "record": "SMA_America__SB5000US__240V_",
+                },
+                "pv_arrays": [
+                    {
+                        "pv_modules": {
+                            "count": 20,
+                            "name": "Solar Array 10MW",
+                            "database": "CECMod",
+                            "record": "Canadian_Solar_Inc__CS5P_220M",
+                        },
+                        "array_setup": {
+                            "name": "Fixed Mount Array (10 MW)",
+                            "mount": {
+                                "type": "fixed_mount",
+                                "tilt_degrees": 30.0,
+                                "azimuth_degrees": 180.0,
+                            },
+                            "number_of_strings": 1000,
+                            "temperature_model": {
+                                "database": "sapm",
+                                "record": "open_rack_glass_glass",
+                            },
+                        },
+                    }
+                ],
+            }
+        ],
+        "physical_simulation": {
+            "aoi_model": "physical",
+            "spectral_model": "no_loss",
+        },
+    }
+
+    # Create weather provider with caching
+    weather_provider = create_open_meteo_provider(
         location=location,
-        use_csv_weather=False,  # Use API weather provider with caching
         start_date=start_date,
         end_date=end_date,
+        organization="SolarRevenue",
+        asset="Weather",
+        interval=TimeInterval.HOURLY,
+        storage=DataStorage(base_path="data"),
     )
-    logger.info("✓ Solar farm ready")
+
+    # Create PV model
+    pv_config = PVLibModel.model_validate(simple_config)
+    pv_model = PVModel(pv_config=pv_config, weather_provider=weather_provider)
+
+    # Enable caching for PV generation
+    pv_model.enable_caching(
+        storage=DataStorage(base_path="data"),
+        organization="SolarRevenue",
+        asset="PV_Generation",
+    )
+    logger.info("Solar farm ready")
 
     return price_provider, pv_model, start_time, end_time
 
@@ -175,11 +240,11 @@ async def main():
 
         logger.info("Key Insights:")
         logger.info(
-            "   • LMP = Locational Marginal Price (wholesale electricity price)"
+            "   - LMP = Locational Marginal Price (wholesale electricity price)"
         )
-        logger.info("   • Revenue = Generation (MW) × LMP ($/MWh) × Hours")
-        logger.info("   • Duck Curve: Midday solar can drive LMP negative")
-        logger.info("   • Solar producers are price-takers in wholesale market")
+        logger.info("   - Revenue = Generation (MW) × LMP ($/MWh) × Hours")
+        logger.info("   - Duck Curve: Midday solar can drive LMP negative")
+        logger.info("   - Solar producers are price-takers in wholesale market")
 
         logger.info("Analysis complete!")
         return 0
@@ -187,9 +252,9 @@ async def main():
     except Exception as e:
         logger.warning(f"Error: {e}")
         logger.info("Common issues:")
-        logger.info("   • CAISO API rate limits (try again in a few minutes)")
-        logger.info("   • Recent data may not be available yet")
-        logger.info("   • Network connectivity issues")
+        logger.info("   - CAISO API rate limits (try again in a few minutes)")
+        logger.info("   - Recent data may not be available yet")
+        logger.info("   - Network connectivity issues")
         return 1
 
 

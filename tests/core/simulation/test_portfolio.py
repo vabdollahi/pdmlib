@@ -12,7 +12,7 @@ All tests use local CSV files for weather and price data, no API calls.
 All tests use the unified configuration system for consistency.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -40,22 +40,36 @@ from tests.config import test_config
 # Shared fixtures for all test classes
 @pytest.fixture
 def test_portfolio():
-    """Create a test portfolio using unified configuration."""
-    return test_config.create_test_portfolio()
+    """Create a test portfolio using spec-driven configuration."""
+    from app.core.environment.config import create_environment_config_from_json
+
+    config = create_environment_config_from_json(test_config.environment_spec_path)
+    # Get the first portfolio from the spec
+    return config.portfolios[0]
 
 
 @pytest.fixture
 def portfolio_config():
     """Get portfolio configuration from unified config."""
-    config_data = test_config.load_config_file("test_portfolio_config.json")
-    return PortfolioConfiguration.model_validate(config_data["portfolio_config"])
+    config_data = test_config.load_config_file("test_config_multi.json")
+    # Use the first portfolio from the portfolios array
+    portfolio_data = config_data["portfolios"][0]
+    return PortfolioConfiguration.model_validate(
+        {
+            "name": portfolio_data["name"],
+            "max_total_power_mw": portfolio_data["max_total_power_mw"],
+            "allow_grid_purchase": portfolio_data.get("allow_grid_purchase", False),
+            "strategy": PortfolioStrategy.BALANCED,  # Default strategy
+        }
+    )
 
 
 @pytest.fixture
 def plant_configs():
     """Load plant configurations from unified config."""
-    config_data = test_config.load_config_file("test_portfolio_config.json")
-    return config_data["plants"]
+    config_data = test_config.load_config_file("test_config_multi.json")
+    # Get plants from the first portfolio
+    return config_data["portfolios"][0]["plants"]
 
 
 @pytest.fixture
@@ -68,8 +82,8 @@ def weather_provider():
     provider = CSVWeatherProvider(location=location, file_path=str(csv_path))
     # Set range to match the data in the CSV file
     provider.set_range(
-        start_time=datetime(2025, 7, 15, 0, 0),
-        end_time=datetime(2025, 7, 15, 23, 0),
+        start_time=datetime(2025, 7, 15, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2025, 7, 15, 23, 0, tzinfo=timezone.utc),
     )
     return provider
 
@@ -82,8 +96,8 @@ def price_provider():
     provider = CSVPriceProvider(csv_file_path=str(csv_path))
     # Set range to match the data in the CSV file
     provider.set_range(
-        start_time=datetime(2025, 7, 15, 0, 0),
-        end_time=datetime(2025, 7, 15, 23, 0),
+        start_time=datetime(2025, 7, 15, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2025, 7, 15, 23, 0, tzinfo=timezone.utc),
     )
     return provider
 
@@ -156,7 +170,7 @@ class TestPortfolioCreation:
         plants_list = await test_plants
         portfolio = PowerPlantPortfolio(config=portfolio_config, plants=plants_list)
 
-        assert portfolio.config.name == "Test Multi-Plant Portfolio"
+        assert portfolio.config.name == "Multi-Plant Test Portfolio"
         assert portfolio.config.strategy == PortfolioStrategy.BALANCED
         assert len(portfolio.plants) == 3
 
@@ -174,12 +188,12 @@ class TestPortfolioCreation:
             else:
                 plants_without_batteries += 1
 
-        # Verify our expected configuration: 2 with batteries, 1 without
-        assert plants_with_batteries == 2, (
-            f"Expected 2 plants with batteries, got {plants_with_batteries}"
+        # Verify our expected configuration: all 3 plants have batteries
+        assert plants_with_batteries == 3, (
+            f"Expected 3 plants with batteries, got {plants_with_batteries}"
         )
-        assert plants_without_batteries == 1, (
-            f"Expected 1 plant without batteries, got {plants_without_batteries}"
+        assert plants_without_batteries == 0, (
+            f"Expected 0 plants without batteries, got {plants_without_batteries}"
         )
 
     @pytest.mark.asyncio
@@ -268,7 +282,8 @@ class TestPortfolioDispatch:
     async def test_dispatch_power_balanced_strategy(self, test_portfolio):
         """Test power dispatch with balanced strategy using local data."""
         portfolio = await test_portfolio
-        timestamp = datetime(2025, 7, 15, 12, 0, 0)  # Noon - matches CSV data
+        # Noon - matches CSV data
+        timestamp = datetime(2025, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
         target_power = 10.0  # MW
 
         portfolio.set_strategy(PortfolioStrategy.BALANCED)
@@ -286,7 +301,8 @@ class TestPortfolioDispatch:
     async def test_get_available_power(self, test_portfolio):
         """Test available power calculation using local CSV data."""
         portfolio = await test_portfolio
-        timestamp = datetime(2025, 7, 15, 10, 0, 0)  # Morning - matches CSV data
+        # Morning - matches CSV data
+        timestamp = datetime(2025, 7, 15, 10, 0, 0, tzinfo=timezone.utc)
 
         max_gen, max_cons = await portfolio.get_available_power(
             timestamp=timestamp, interval_minutes=60.0

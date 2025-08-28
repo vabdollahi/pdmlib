@@ -1,0 +1,105 @@
+{
+  "start_date_time": "2025-07-15T08:00:00+00:00",
+  "end_date_time": "2025-07-15T18:00:00+00:00",
+  "interval_min": 60,
+  "historic_data_intervals": 6,
+  "forecast_data_intervals": 12,
+  "power_normalization_coefficient": 1000000,
+  "price_normalization_coefficient": 100.0,
+  "action_tolerance_percent": 0.01,
+  "smoothed_reward_parameter": 0.1,
+  "max_grid_purchase_mw": 50.0,
+  "grid_purchase_enabled": false,
+  "agent": {
+    "type": "BasicHeuristic",
+    "parameters": {
+      "max_lookahead_steps": 8,
+      "charge_threshold_ratio": 0.25,
+      "discharge_threshold_ratio": 0.75,
+      "soc_buffer": 0.05
+    },
+    "enabled": true,
+    "name": "test_heuristic"
+  },
+  "portfolios": [
+    {
+      "name": "Simple Test Portfolio",
+      "max_total_power_mw": 25.0,
+      "allow_grid_purchase": false,
+      "market": {
+        "prices": [
+          {
+            "type": "csv_file",
+            "name": "Sample Price Data",
+            "data": "tests/data/sample_price_data.csv"
+          }
+        ],
+        "weather": {
+          "type": "csv_file",
+          "data": "tests/data/sample_weather_data.csv"
+        }
+      },
+      "plants": [
+        {
+          "location": {
+            "name": "Test_Plant",
+            "latitude": 34.0522,
+            "longitude": -118.2437,
+            "tz": "America/Los_Angeles",
+            "altitude": 100
+          },
+          "pv_systems": [
+            {
+              "inverters": {
+                "count": 1,
+                "database": "CECInverter",
+                "record": "SMA_America__SB5000US__240V_"
+              },
+              "pv_arrays": [
+                {
+                  "pv_modules": {
+                    "count": 10,
+                    "name": "Test Array",
+                    "database": "CECMod",
+                    "record": "Canadian_Solar_Inc__CS5P_220M"
+                  },
+                  "array_setup": {
+                    "name": "Fixed Mount Test Array",
+                    "mount": {
+                      "type": "fixed_mount",
+                      "tilt_degrees": 28.0,
+                      "azimuth_degrees": 180.0
+                    },
+                    "number_of_strings": 100,
+                    "temperature_model": {
+                      "database": "sapm",
+                      "record": "open_rack_glass_glass"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "batteries": [
+            {
+              "name": "Test Battery",
+              "energy_capacity_mwh": 10.0,
+              "max_power_mw": 5.0,
+              "round_trip_efficiency": 0.85,
+              "initial_soc": 0.5,
+              "min_soc": 0.1,
+              "max_soc": 0.9
+            }
+          ],
+          "plant_config": {
+            "name": "Test Plant",
+            "plant_id": "TP-001",
+            "max_net_power_mw": 5.0,
+            "min_net_power_mw": 0.0,
+            "enable_market_participation": true
+          }
+        }
+      ]
+    }
+  ]
+}
