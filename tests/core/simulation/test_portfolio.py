@@ -274,7 +274,7 @@ class TestPortfolioDispatch:
         portfolio.set_strategy(PortfolioStrategy.BALANCED)
 
         actual_power, state, is_valid = await portfolio.dispatch_power(
-            target_net_power_mw=target_power, timestamp=timestamp, interval_minutes=15.0
+            target_net_power_mw=target_power, timestamp=timestamp, interval_minutes=60.0
         )
 
         assert is_valid
@@ -289,7 +289,7 @@ class TestPortfolioDispatch:
         timestamp = datetime(2025, 7, 15, 10, 0, 0)  # Morning - matches CSV data
 
         max_gen, max_cons = await portfolio.get_available_power(
-            timestamp=timestamp, interval_minutes=5.0
+            timestamp=timestamp, interval_minutes=60.0
         )
 
         assert isinstance(max_gen, float)

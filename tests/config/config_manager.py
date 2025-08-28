@@ -242,7 +242,7 @@ class TestConfigManager:
                 portfolios=[portfolio],
                 start_date_time=datetime.datetime(2025, 7, 15, 8, 0, 0),
                 end_date_time=datetime.datetime(2025, 7, 15, 18, 0, 0),
-                interval_min=15.0,
+                interval_min=60.0,
             )
         except ImportError:
             # Skip environment tests if gymnasium is not available

@@ -29,6 +29,7 @@ dev = [
 
 [tool.taskipy.tasks]
 start = "python -m app.main"
+simulate = "python -m app.simulation_main"
 test = "pytest tests"
 test-verbose = "pytest tests -v --tb=short"
 lint = "ruff check app tests"

@@ -64,7 +64,7 @@ class PortfolioProtocol(Protocol):
         self,
         target_net_power_mw: float,
         timestamp: datetime.datetime,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> Tuple[float, Dict[str, float], bool]:
         """
         Dispatch power across the portfolio.
@@ -80,7 +80,7 @@ class PortfolioProtocol(Protocol):
         ...
 
     def get_available_power(
-        self, timestamp: datetime.datetime, interval_minutes: float = 5.0
+        self, timestamp: datetime.datetime, interval_minutes: float = 60.0
     ) -> Tuple[float, float]:
         """
         Get available power generation and consumption capability.
@@ -442,7 +442,7 @@ class PowerPlantPortfolio(BaseModel):
         return status
 
     async def get_available_power(
-        self, timestamp: datetime.datetime, interval_minutes: float = 5.0
+        self, timestamp: datetime.datetime, interval_minutes: float = 60.0
     ) -> Tuple[float, float]:
         """
         Get total available power generation and consumption capability.
@@ -599,7 +599,7 @@ class PowerPlantPortfolio(BaseModel):
         self,
         target_net_power_mw: float,
         timestamp: datetime.datetime,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> Tuple[float, Dict, bool]:
         """
         Dispatch power across the portfolio using optimization strategy.
@@ -734,7 +734,7 @@ class PowerPlantPortfolio(BaseModel):
     async def simulate_operation(
         self,
         power_schedule_mw: pd.Series,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> pd.DataFrame:
         """
         Simulate portfolio operation over a power dispatch schedule.

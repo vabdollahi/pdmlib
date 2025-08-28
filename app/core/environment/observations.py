@@ -21,7 +21,7 @@ ObservationType = Dict[str, Dict[str, np.ndarray]]
 class ObservationName:
     """Available observation types."""
 
-    # Plant observations
+    # Plant observations - existing
     PV_GENERATION_POTENTIAL = "pv_generation_potential_mw"
     PV_GENERATION_CURRENT = "pv_generation_current_mw"
     BATTERY_SOC = "battery_soc"
@@ -29,10 +29,31 @@ class ObservationName:
     BATTERY_ENERGY_AVAILABLE = "battery_energy_available_mwh"
     NET_POWER_CAPABILITY = "net_power_capability_mw"
 
-    # Market observations
+    # Enhanced plant observations for actors
+    DC_POWER_GENERATION_POTENTIAL = "dc_power_generation_potential_mw"
+    AC_POWER_GENERATION_POTENTIAL = "ac_power_generation_potential_mw"
+    AC_POWER_GENERATION_POTENTIAL_FORECAST = "ac_power_generation_potential_forecast_mw"
+    MAX_AC_POWER_TO_GRID = "max_ac_power_to_grid_mw"
+    INVERTER_DC_TO_AC_CONVERSION_EFFICIENCY = "inverter_dc_to_ac_efficiency"
+
+    # Enhanced battery observations for actors
+    BATTERY_ENERGY_CAPACITY = "battery_energy_capacity_mwh"
+    BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power_mw"
+    BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power_mw"
+    BATTERY_STATE_OF_CHARGE = "battery_state_of_charge"
+    BATTERY_MIN_STATE_OF_CHARGE = "battery_min_state_of_charge"
+    BATTERY_MAX_STATE_OF_CHARGE = "battery_max_state_of_charge"
+
+    # Market observations - existing
     CURRENT_PRICE = "current_price_dollar_mwh"
     PRICE_FORECAST = "price_forecast_dollar_mwh"
     PRICE_HISTORY = "price_history_dollar_mwh"
+
+    # Enhanced market observations for actors
+    PPA_PRICE = "ppa_price_dollar_mwh"
+    PPA_PRICE_FORECAST = "ppa_price_forecast_dollar_mwh"
+    PPA_AC_POWER_GENERATION_COMMITMENT = "ppa_ac_power_commitment_mw"
+    PPA_AC_POWER_GENERATION_COMMITMENT_FORECAST = "ppa_ac_power_commitment_forecast_mw"
 
     # Time-based observations
     HOUR_OF_DAY = "hour_of_day"
@@ -87,7 +108,7 @@ class ObservationFactory:
         forecast_data_intervals: int = 12,
         power_normalization_coefficient: float = 1e6,
         price_normalization_coefficient: float = 100.0,
-        interval_min: float = 5.0,
+        interval_min: float = 60.0,
     ):
         """
         Initialize observation factory.
@@ -141,6 +162,61 @@ class ObservationFactory:
             portfolio_observation["market"] = market_observation
 
             observation[portfolio.config.name] = portfolio_observation
+
+        return observation
+
+    async def create_enhanced_observation(
+        self, timestamp: datetime.datetime
+    ) -> Dict[str, Dict[str, Dict[str, np.ndarray]]]:
+        """
+        Create enhanced observations formatted for actor agents.
+
+        Args:
+            timestamp: Current timestamp
+
+        Returns:
+            Dictionary in format:
+            {
+                "market": {
+                    "market_data": {
+                        "current_price_dollar_mwh": np.array([price]),
+                        "price_forecast_dollar_mwh": np.array([...]),
+                        ...
+                    }
+                },
+                "portfolios": {
+                    "portfolio_name": {
+                        "plant_name": {
+                            "dc_power_generation_potential_mw": np.array([...]),
+                            ...
+                        }
+                    }
+                }
+            }
+        """
+        observation = {"market": {}, "portfolios": {}}
+
+        # Create time indices for historic and forecast data
+        historical_indices = self._create_historical_indices(timestamp)
+        forecast_indices = self._create_forecast_indices(timestamp)
+
+        # Create market observations
+        market_obs = self._create_enhanced_market_observations(
+            timestamp, historical_indices, forecast_indices
+        )
+        observation["market"] = {"market_data": market_obs}
+
+        # Create portfolio observations
+        for portfolio in self.portfolios:
+            portfolio_obs = {}
+
+            for plant in portfolio.plants:
+                plant_obs = await self._create_enhanced_plant_observations(
+                    plant, timestamp, historical_indices, forecast_indices
+                )
+                portfolio_obs[plant.config.name] = plant_obs
+
+            observation["portfolios"][portfolio.config.name] = portfolio_obs
 
         return observation
 
@@ -302,6 +378,185 @@ class ObservationFactory:
             market_obs = self._get_default_market_observations()
 
         return market_obs
+
+    async def _create_enhanced_plant_observations(
+        self,
+        plant,
+        timestamp: datetime.datetime,
+        historical_indices: pd.DatetimeIndex,
+        forecast_indices: pd.DatetimeIndex,
+    ) -> Dict[str, np.ndarray]:
+        """Create enhanced observations for a single plant."""
+        plant_obs = {}
+
+        try:
+            # Current PV generation potential (DC)
+            dc_potential = await plant.get_pv_generation_potential(timestamp)
+            plant_obs[ObservationName.DC_POWER_GENERATION_POTENTIAL] = np.array(
+                [dc_potential / self.power_normalization_coefficient]
+            )
+
+            # AC generation potential (assuming 95% inverter efficiency as default)
+            inverter_efficiency = getattr(plant.config, "inverter_efficiency", 0.95)
+            ac_potential = dc_potential * inverter_efficiency
+            plant_obs[ObservationName.AC_POWER_GENERATION_POTENTIAL] = np.array(
+                [ac_potential / self.power_normalization_coefficient]
+            )
+
+            # Inverter efficiency
+            plant_obs[ObservationName.INVERTER_DC_TO_AC_CONVERSION_EFFICIENCY] = (
+                np.array([inverter_efficiency])
+            )
+
+            # Max AC power to grid (from plant configuration)
+            max_ac_power = getattr(plant.config, "max_net_power_mw", ac_potential)
+            plant_obs[ObservationName.MAX_AC_POWER_TO_GRID] = np.array(
+                [max_ac_power / self.power_normalization_coefficient]
+            )
+
+            # AC generation forecast
+            if len(forecast_indices) > 0:
+                # For now, create a simple forecast based on current potential
+                # In a real implementation, this would use weather forecasts
+                forecast_ac = np.full(len(forecast_indices), ac_potential)
+                # Add some variation for realism
+                variation = np.random.normal(0, 0.1, len(forecast_indices))
+                forecast_ac = forecast_ac * (1 + variation)
+                forecast_ac = np.maximum(forecast_ac, 0)  # Ensure non-negative
+
+                plant_obs[ObservationName.AC_POWER_GENERATION_POTENTIAL_FORECAST] = (
+                    forecast_ac / self.power_normalization_coefficient
+                )
+            else:
+                plant_obs[ObservationName.AC_POWER_GENERATION_POTENTIAL_FORECAST] = (
+                    np.array([])
+                )
+
+            # Battery observations
+            if plant.batteries:
+                battery = plant.batteries[0]  # Assume single battery per plant
+
+                # Battery capacity and power limits
+                plant_obs[ObservationName.BATTERY_ENERGY_CAPACITY] = np.array(
+                    [battery.config.energy_capacity_mwh]
+                )
+                plant_obs[ObservationName.BATTERY_MAX_CHARGE_POWER] = np.array(
+                    [battery.config.max_power_mw]
+                )
+                plant_obs[ObservationName.BATTERY_MAX_DISCHARGE_POWER] = np.array(
+                    [battery.config.max_power_mw]
+                )
+
+                # Battery state of charge
+                current_soc = battery.state_of_charge
+                plant_obs[ObservationName.BATTERY_STATE_OF_CHARGE] = np.array(
+                    [current_soc]
+                )
+
+                # SOC limits
+                plant_obs[ObservationName.BATTERY_MIN_STATE_OF_CHARGE] = np.array(
+                    [battery.config.min_soc]
+                )
+                plant_obs[ObservationName.BATTERY_MAX_STATE_OF_CHARGE] = np.array(
+                    [battery.config.max_soc]
+                )
+            else:
+                # No battery case - set all battery observations to zero
+                for battery_obs_name in [
+                    ObservationName.BATTERY_ENERGY_CAPACITY,
+                    ObservationName.BATTERY_MAX_CHARGE_POWER,
+                    ObservationName.BATTERY_MAX_DISCHARGE_POWER,
+                    ObservationName.BATTERY_STATE_OF_CHARGE,
+                    ObservationName.BATTERY_MIN_STATE_OF_CHARGE,
+                    ObservationName.BATTERY_MAX_STATE_OF_CHARGE,
+                ]:
+                    plant_obs[battery_obs_name] = np.array([0.0])
+
+        except Exception as e:
+            logger.error(f"Error creating enhanced plant observations: {e}")
+            # Return default observations on error
+            plant_obs = self._get_default_enhanced_plant_observations()
+
+        return plant_obs
+
+    def _create_enhanced_market_observations(
+        self,
+        timestamp: datetime.datetime,
+        historical_indices: pd.DatetimeIndex,
+        forecast_indices: pd.DatetimeIndex,
+    ) -> Dict[str, np.ndarray]:
+        """Create enhanced market observations."""
+        market_obs = {}
+
+        try:
+            # Current price (placeholder - would integrate with price providers)
+            current_price = 50.0  # $/MWh
+            market_obs[ObservationName.CURRENT_PRICE] = np.array([current_price])
+
+            # Price history
+            if len(historical_indices) > 0:
+                # Simple historical price simulation
+                hist_prices = np.full(len(historical_indices), current_price)
+                # Add some variation
+                variation = np.random.normal(0, 5, len(historical_indices))
+                hist_prices = hist_prices + variation
+                hist_prices = np.maximum(hist_prices, 0)  # Ensure non-negative
+
+                market_obs[ObservationName.PRICE_HISTORY] = hist_prices
+            else:
+                market_obs[ObservationName.PRICE_HISTORY] = np.array([])
+
+            # Price forecast
+            if len(forecast_indices) > 0:
+                # Simple price forecast simulation
+                forecast_prices = np.full(len(forecast_indices), current_price)
+                # Add trend and variation
+                trend = np.linspace(0, 10, len(forecast_indices))  # Slight upward trend
+                variation = np.random.normal(0, 3, len(forecast_indices))
+                forecast_prices = forecast_prices + trend + variation
+                forecast_prices = np.maximum(forecast_prices, 0)  # Ensure non-negative
+
+                market_obs[ObservationName.PRICE_FORECAST] = forecast_prices
+            else:
+                market_obs[ObservationName.PRICE_FORECAST] = np.array([])
+
+            # PPA observations (optional - set to None/zero for now)
+            market_obs[ObservationName.PPA_PRICE] = None
+            market_obs[ObservationName.PPA_PRICE_FORECAST] = None
+            market_obs[ObservationName.PPA_AC_POWER_GENERATION_COMMITMENT] = None
+            market_obs[ObservationName.PPA_AC_POWER_GENERATION_COMMITMENT_FORECAST] = (
+                None
+            )
+
+        except Exception as e:
+            logger.error(f"Error creating enhanced market observations: {e}")
+            market_obs = self._get_default_enhanced_market_observations()
+
+        return market_obs
+
+    def _get_default_enhanced_plant_observations(self) -> Dict[str, np.ndarray]:
+        """Get default enhanced plant observations for error cases."""
+        return {
+            ObservationName.DC_POWER_GENERATION_POTENTIAL: np.array([0.0]),
+            ObservationName.AC_POWER_GENERATION_POTENTIAL: np.array([0.0]),
+            ObservationName.AC_POWER_GENERATION_POTENTIAL_FORECAST: np.array([]),
+            ObservationName.MAX_AC_POWER_TO_GRID: np.array([0.0]),
+            ObservationName.INVERTER_DC_TO_AC_CONVERSION_EFFICIENCY: np.array([0.95]),
+            ObservationName.BATTERY_ENERGY_CAPACITY: np.array([0.0]),
+            ObservationName.BATTERY_MAX_CHARGE_POWER: np.array([0.0]),
+            ObservationName.BATTERY_MAX_DISCHARGE_POWER: np.array([0.0]),
+            ObservationName.BATTERY_STATE_OF_CHARGE: np.array([0.5]),
+            ObservationName.BATTERY_MIN_STATE_OF_CHARGE: np.array([0.1]),
+            ObservationName.BATTERY_MAX_STATE_OF_CHARGE: np.array([0.9]),
+        }
+
+    def _get_default_enhanced_market_observations(self) -> Dict[str, np.ndarray]:
+        """Get default enhanced market observations for error cases."""
+        return {
+            ObservationName.CURRENT_PRICE: np.array([50.0]),
+            ObservationName.PRICE_FORECAST: np.array([]),
+            ObservationName.PRICE_HISTORY: np.array([]),
+        }
 
     def _get_default_plant_observations(self) -> Dict[str, np.ndarray]:
         """Get default plant observations for error cases."""

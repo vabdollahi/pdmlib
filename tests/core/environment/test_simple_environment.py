@@ -21,7 +21,7 @@ class TestSimpleEnvironment:
         # Test basic properties
         assert env.timestamp.hour == 8
         assert env.end_date_time.hour == 18
-        assert env.interval.total_seconds() == 15 * 60
+        assert env.interval.total_seconds() == 60 * 60
 
         # Test observation space
         obs_space = env.observation_space

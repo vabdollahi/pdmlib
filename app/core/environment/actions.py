@@ -20,9 +20,14 @@ ActionType = Dict[str, Dict[str, Dict[str, float]]]
 class ActionName(str, Enum):
     """Available action types for plant control."""
 
+    # Existing actions
     NET_POWER_TARGET = "net_power_target_mw"
     BATTERY_POWER_TARGET = "battery_power_target_mw"
     PV_CURTAILMENT_FACTOR = "pv_curtailment_factor"
+
+    # Enhanced action names for actors
+    DC_POWER_GENERATION_TARGET = "dc_power_generation_target_mw"
+    AC_POWER_GENERATION_TARGET = "ac_power_generation_target_mw"
 
 
 class ActionTemplate(BaseModel):
@@ -67,7 +72,7 @@ class ActionFactory:
         self,
         portfolios: List[PowerPlantPortfolio],
         power_normalization_coefficient: float = 1e6,
-        interval_min: float = 5.0,
+        interval_min: float = 60.0,
         action_tolerance_percent: float = 0.05,
     ):
         """
