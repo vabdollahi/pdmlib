@@ -75,7 +75,7 @@ class TestHeuristicActor:
         assert ObservationName.BATTERY_STATE_OF_CHARGE in plant_obs
 
         # Test heuristic action
-        action = heuristic.get_action(observation, timestamp, obs_factory)
+        action = heuristic.get_action(observation, timestamp)
 
         # Verify action structure
         assert isinstance(action, dict)
