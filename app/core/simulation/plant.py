@@ -174,6 +174,9 @@ class SolarBatteryPlant(BaseModel):
         """Initialize plant with validation."""
         super().__init__(**data)
 
+        # Validate max_net_power_mw against PV system capacity
+        self._validate_power_capacity_consistency()
+
         # Enable PV caching by default with standard data storage
         if self.pv_cache_enabled:
             try:
@@ -195,6 +198,49 @@ class SolarBatteryPlant(BaseModel):
             f"Initialized solar-battery plant '{self.config.name}' with "
             f"{len(self.batteries)} batteries"
         )
+
+    def _validate_power_capacity_consistency(self) -> None:
+        """Validate that max_net_power_mw is consistent with PV system capacity."""
+        try:
+            pv_capacity = self.pv_model.get_system_capacity()
+            pv_ac_capacity_mw = pv_capacity["ac_capacity_w"] / 1e6
+
+            if pv_ac_capacity_mw > 0:
+                # Check if max_net_power_mw significantly exceeds PV AC capacity
+                capacity_ratio = self.config.max_net_power_mw / pv_ac_capacity_mw
+
+                if capacity_ratio > 1.1:  # Allow 10% margin for measurement differences
+                    logger.warning(
+                        f"Plant '{self.config.name}' max_net_power_mw "
+                        f"({self.config.max_net_power_mw:.2f} MW) exceeds "
+                        f"PV AC capacity ({pv_ac_capacity_mw:.2f} MW) by "
+                        f"{(capacity_ratio - 1) * 100:.1f}%. "
+                        f"Consider setting max_net_power_mw to match PV capacity."
+                    )
+                elif capacity_ratio < 0.5:  # Warn if significantly under-utilized
+                    logger.info(
+                        f"Plant '{self.config.name}' max_net_power_mw "
+                        f"({self.config.max_net_power_mw:.2f} MW) is only "
+                        f"{capacity_ratio * 100:.1f}% of PV AC capacity "
+                        f"({pv_ac_capacity_mw:.2f} MW). This may limit utilization."
+                    )
+                else:
+                    logger.debug(
+                        f"Plant '{self.config.name}' power capacity is consistent: "
+                        f"max_net_power_mw={self.config.max_net_power_mw:.2f} MW, "
+                        f"PV AC capacity={pv_ac_capacity_mw:.2f} MW"
+                    )
+            else:
+                logger.warning(
+                    f"Plant '{self.config.name}' PV system has zero AC capacity. "
+                    f"Check PV system configuration."
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"Could not validate power capacity consistency for plant "
+                f"'{self.config.name}': {e}"
+            )
 
     def __hash__(self):
         """Make plant hashable by using its name and plant_id."""
@@ -646,6 +692,29 @@ class SolarBatteryPlant(BaseModel):
             "max_net_power_mw": self.config.max_net_power_mw,
             "dc_ac_ratio": pv_capacity["dc_ac_ratio"],
         }
+
+    def get_recommended_max_power_mw(self) -> float:
+        """
+        Get recommended max_net_power_mw based on PV system AC capacity.
+
+        Returns:
+            Recommended maximum net power in MW based on PV capacity
+        """
+        try:
+            pv_capacity = self.pv_model.get_system_capacity()
+            pv_ac_capacity_mw = pv_capacity["ac_capacity_w"] / 1e6
+
+            # Return PV AC capacity as the recommended max power
+            # This ensures the plant can't exceed its physical generation capability
+            return pv_ac_capacity_mw
+
+        except Exception as e:
+            logger.warning(
+                f"Could not calculate recommended max power for plant "
+                f"'{self.config.name}': {e}"
+            )
+            # Fallback to current configured value
+            return self.config.max_net_power_mw
 
     def __add__(self, other: "SolarBatteryPlant") -> "SolarBatteryPlant":
         """

@@ -234,25 +234,14 @@ class ActionFactory:
                 "but not used (manual PV control not implemented)"
             )
 
-        # Calculate basic reward (revenue based on power output)
-        # Note: This is a simplified calculation. The main reward calculation
-        # should be done by the RewardFactory which has access to actual prices
-        reward = 0.0
+        # Calculate revenue using plant's revenue calculator
+        reward = await plant.revenue_calculator.calculate_instantaneous_revenue(
+            power_mw=actual_power, timestamp=timestamp, interval_min=self.interval_min
+        )
 
-        # For action execution, we provide a basic placeholder reward
-        # The actual reward will be calculated by the environment's reward system
-        if actual_power > 0:
-            # Positive power = generation = positive placeholder reward
-            reward = actual_power * 0.001  # Small positive value per MW
-        elif actual_power < 0:
-            # Negative power = consumption = small negative reward
-            reward = actual_power * 0.001  # Small negative value
-        else:
-            # No power = no reward
-            reward = 0.0
-
-        # Scale reward to reasonable range for RL training
-        reward = reward * (self.interval_min / 60.0)  # Scale by interval length
+        logger.debug(
+            f"Plant {plant.config.name}: {actual_power:.2f}MW -> ${reward:.4f} revenue"
+        )
 
         # Normalize actual power for return (convert back to normalized scale)
         normalized_actual_power = actual_power / self.power_normalization_coefficient

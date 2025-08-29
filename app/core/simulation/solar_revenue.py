@@ -97,17 +97,7 @@ class SolarRevenueCalculator:
                 price_data = pd.DataFrame()
 
         if len(price_data) == 0:
-            logger.warning("No LMP price data available")
-            return SolarRevenueResult(
-                total_generation_mwh=0.0,
-                total_revenue_dollar=0.0,
-                avg_lmp_dollar_mwh=0.0,
-                min_lmp_dollar_mwh=0.0,
-                max_lmp_dollar_mwh=0.0,
-                negative_price_hours=0,
-                avg_revenue_per_mwh=0.0,
-                duck_curve_detected=False,
-            )
+            raise ValueError("No LMP price data available for revenue calculation")
 
         logger.info(f"Retrieved {len(price_data)} LMP data points")
 
@@ -116,17 +106,8 @@ class SolarRevenueCalculator:
         generation_data = await self.pv_model.run_simulation()
 
         if len(generation_data) == 0:
-            logger.warning("No solar generation data available")
-            price_col = PriceColumns.PRICE_DOLLAR_MWH.value
-            return SolarRevenueResult(
-                total_generation_mwh=0.0,
-                total_revenue_dollar=0.0,
-                avg_lmp_dollar_mwh=price_data[price_col].mean(),
-                min_lmp_dollar_mwh=price_data[price_col].min(),
-                max_lmp_dollar_mwh=price_data[price_col].max(),
-                negative_price_hours=len(price_data[price_data[price_col] < 0]),
-                avg_revenue_per_mwh=0.0,
-                duck_curve_detected=price_data[price_col].min() < 0,
+            raise ValueError(
+                "No solar generation data available for revenue calculation"
             )
 
         logger.info(f"Generated {len(generation_data)} generation data points")
@@ -135,23 +116,88 @@ class SolarRevenueCalculator:
         combined_data = self._align_data(price_data, generation_data)
 
         if len(combined_data) == 0:
-            logger.warning("No overlapping data between prices and generation")
-            price_col = PriceColumns.PRICE_DOLLAR_MWH.value
-            return SolarRevenueResult(
-                total_generation_mwh=0.0,
-                total_revenue_dollar=0.0,
-                avg_lmp_dollar_mwh=price_data[price_col].mean(),
-                min_lmp_dollar_mwh=price_data[price_col].min(),
-                max_lmp_dollar_mwh=price_data[price_col].max(),
-                negative_price_hours=len(price_data[price_data[price_col] < 0]),
-                avg_revenue_per_mwh=0.0,
-                duck_curve_detected=price_data[price_col].min() < 0,
+            raise ValueError(
+                "No overlapping data between prices and generation - "
+                "check data alignment and time ranges"
             )
 
         logger.info(f"Aligned {len(combined_data)} data points for revenue calculation")
 
         # Calculate revenue
         return self._calculate_revenue_metrics(combined_data)
+
+    async def calculate_instantaneous_revenue(
+        self,
+        power_mw: float,
+        timestamp: datetime,
+        interval_min: float = 60.0,
+    ) -> float:
+        """
+        Calculate revenue for a specific power output at a given timestamp.
+
+        This method is designed for real-time reward calculation in the power
+        management environment.
+
+        Args:
+            power_mw: Power output in MW (can be negative for consumption)
+            timestamp: Timestamp for price lookup
+            interval_min: Time interval in minutes (default: 60 minutes)
+
+        Returns:
+            Revenue in dollars for the given power and time interval
+
+        Raises:
+            ValueError: If no price data is available
+        """
+        # Get price data
+        price_data = await self.price_provider.get_data()
+
+        if len(price_data) == 0:
+            raise ValueError("No price data available for revenue calculation")
+
+        # Find the price at the given timestamp
+        current_price = await self._get_price_at_timestamp(price_data, timestamp)
+
+        # Calculate revenue: Power (MW) × Price ($/MWh) × Time (hours)
+        time_hours = interval_min / 60.0
+        revenue = power_mw * current_price * time_hours
+
+        logger.debug(
+            f"Instantaneous revenue: {power_mw:.2f}MW × "
+            f"${current_price:.2f}/MWh × {time_hours:.2f}h = ${revenue:.4f}"
+        )
+
+        return revenue
+
+    async def _get_price_at_timestamp(
+        self, price_data: pd.DataFrame, timestamp: datetime
+    ) -> float:
+        """
+        Get electricity price at a specific timestamp.
+
+        Raises:
+            ValueError: If price data cannot be found for the timestamp
+        """
+        price_col = PriceColumns.PRICE_DOLLAR_MWH.value
+
+        # Reset index to work with timestamp column
+        price_data_reset = price_data.reset_index()
+
+        if "timestamp" not in price_data_reset.columns:
+            raise ValueError("No timestamp column found in price data")
+
+        if price_col not in price_data_reset.columns:
+            raise ValueError(f"Price column '{price_col}' not found in price data")
+
+        # Find the closest timestamp
+        time_diffs = abs(price_data_reset["timestamp"] - timestamp)
+        closest_idx = time_diffs.idxmin()
+
+        current_price = float(price_data_reset.at[closest_idx, price_col])
+
+        logger.debug(f"Found price ${current_price:.2f}/MWh at timestamp {timestamp}")
+
+        return current_price
 
     def _align_data(
         self, price_data: pd.DataFrame, generation_data: pd.DataFrame

@@ -46,10 +46,7 @@ class EnvironmentConfig(BaseModel):
     max_grid_purchase_mw: float = Field(
         default=50.0, description="Maximum power that can be purchased from grid (MW)"
     )
-    grid_purchase_enabled: bool = Field(
-        default=False,
-        description="Whether grid purchases are allowed for all portfolios",
-    )
+    # Note: grid purchase enabling is controlled at portfolio level
 
     # Data configuration
     historic_data_intervals: int = Field(
@@ -208,7 +205,6 @@ class EnvironmentConfigFactory:
                 smoothed_reward_parameter=spec.smoothed_reward_parameter,
                 action_tolerance_percent=spec.action_tolerance_percent,
                 max_grid_purchase_mw=spec.max_grid_purchase_mw,
-                grid_purchase_enabled=spec.grid_purchase_enabled,
                 agent=agent,
             )
 
