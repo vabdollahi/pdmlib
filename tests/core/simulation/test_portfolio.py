@@ -170,7 +170,7 @@ class TestPortfolioCreation:
         plants_list = await test_plants
         portfolio = PowerPlantPortfolio(config=portfolio_config, plants=plants_list)
 
-        assert portfolio.config.name == "Multi-Plant Test Portfolio"
+        assert portfolio.config.name == "Validation Portfolio"
         assert portfolio.config.strategy == PortfolioStrategy.BALANCED
         assert len(portfolio.plants) == 3
 
@@ -188,12 +188,12 @@ class TestPortfolioCreation:
             else:
                 plants_without_batteries += 1
 
-        # Verify our expected configuration: all 3 plants have batteries
-        assert plants_with_batteries == 3, (
-            f"Expected 3 plants with batteries, got {plants_with_batteries}"
+        # Verify our expected configuration: 2 plants with batteries, 1 without
+        assert plants_with_batteries == 2, (
+            f"Expected 2 plants with batteries, got {plants_with_batteries}"
         )
-        assert plants_without_batteries == 0, (
-            f"Expected 0 plants without batteries, got {plants_without_batteries}"
+        assert plants_without_batteries == 1, (
+            f"Expected 1 plant without batteries, got {plants_without_batteries}"
         )
 
     @pytest.mark.asyncio

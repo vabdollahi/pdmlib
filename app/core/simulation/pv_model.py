@@ -538,7 +538,13 @@ class PVModel(BaseModel):
         total_dc_capacity = 0
 
         for pv_system in self.pv_config.pv_systems:
-            if hasattr(pv_system, "max_power_output_ac_w"):
+            # Ensure the PV system is created to populate AC capacity
+            pv_system.create()
+
+            # Check the correct attribute name for AC capacity
+            if hasattr(pv_system, "_max_power_output_ac_w"):
+                total_ac_capacity += pv_system._max_power_output_ac_w or 0
+            elif hasattr(pv_system, "max_power_output_ac_w"):
                 total_ac_capacity += pv_system.max_power_output_ac_w or 0
 
             # Calculate DC capacity from arrays

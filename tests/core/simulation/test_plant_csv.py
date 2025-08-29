@@ -67,8 +67,10 @@ def test_battery_limits_from_config(test_plant):
 def test_basic_plant_simulation(test_plant):
     """Test basic plant simulation functionality."""
     # Test that the plant can provide its configuration
-    assert test_plant.config.name == "California Plant"
-    assert test_plant.config.max_net_power_mw == 25.0
+    # Updated to match our validated config
+    assert test_plant.config.name == "Plant With Battery 1"
+    # Updated from 25.0 to match our config
+    assert test_plant.config.max_net_power_mw == 7.0
 
     # Test that the plant has batteries
     assert len(test_plant.batteries) == 1

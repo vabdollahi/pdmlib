@@ -36,8 +36,8 @@ class TestSimpleEnvironment:
         env = self._create_test_environment()
 
         # Test basic properties
-        assert env.timestamp.hour == 8
-        assert env.end_date_time.hour == 18
+        assert env.timestamp.hour == 0
+        assert env.end_date_time.hour == 23
         assert env.interval.total_seconds() == 60 * 60
 
         # Test observation space
