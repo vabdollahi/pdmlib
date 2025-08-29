@@ -71,16 +71,18 @@ class TestSimulationManager:
         simulation = await create_simulation_from_json(config_path)
 
         # Run short simulation
-        results = await simulation.run_simulation(max_steps=2)
+        max_steps = 2
+        results = await simulation.run_simulation(max_steps=max_steps)
 
         # Verify results
         assert results is not None
-        assert results.total_steps == 2
+        assert results.total_steps == max_steps + 1
         assert isinstance(results.total_reward, float)
         assert isinstance(results.average_reward_per_step, float)
-        assert len(results.step_results) == 2
 
         # Verify each step has required fields
+        # The number of steps is max_steps + 1 because of the initial reset step
+        assert len(results.step_results) == max_steps + 1
         for step_result in results.step_results:
             assert "step" in step_result
             assert "timestamp" in step_result
@@ -100,13 +102,17 @@ class TestSimulationManager:
 
         # Verify market data was loaded
         assert simulation.market is not None
+        assert simulation.market.price_providers is not None
         assert len(simulation.market.price_providers) > 0
 
-        # Verify price data was loaded for at least one portfolio
-        has_price_data = any(
-            not df.empty for df in simulation.market.price_data.values()
+        # Verify price data can be loaded by fetching for the simulation range
+        assert simulation.start_time is not None
+        assert simulation.end_time is not None
+        await simulation.market.load_market_data(
+            simulation.start_time, simulation.end_time
         )
-        assert has_price_data
+        price_data = await simulation.market.get_data()
+        assert not price_data.empty
 
     @pytest.mark.asyncio
     async def test_power_profile_precalculation(self):

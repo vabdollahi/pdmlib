@@ -391,14 +391,3 @@ def create_open_meteo_provider(
     Use create_weather_provider() for more control over provider selection.
     """
     return create_weather_provider(location, "openmeteo", **kwargs)
-
-
-# Backward compatibility alias for tests
-def WeatherProvider(location: GeospatialLocation, **kwargs) -> BaseWeatherProvider:
-    """
-    Backward compatibility alias for create_open_meteo_provider.
-
-    This function exists for backward compatibility with existing tests.
-    For new code, prefer using create_open_meteo_provider() or WeatherProviderConfig.
-    """
-    return create_open_meteo_provider(location, **kwargs)

@@ -6,9 +6,8 @@ reinforcement learning agents in power management scenarios.
 """
 
 from .actions import ActionFactory, ActionType
-from .config import EnvironmentConfig
 from .observations import ObservationFactory, ObservationType
-from .power_management_env import PowerManagementEnvironment
+from .power_management_env import EnvironmentConfig, PowerManagementEnvironment
 from .rewards import RevenueReward, RewardFactory
 
 __all__ = [

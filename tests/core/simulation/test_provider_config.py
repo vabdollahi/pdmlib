@@ -19,8 +19,6 @@ from app.core.simulation.provider_config import (
     CSVWeatherProviderConfig,
     IESOPriceProviderConfig,
     OpenMeteoWeatherProviderConfig,
-    create_default_price_provider,
-    create_default_weather_provider,
     create_price_provider_from_config,
     create_weather_provider_from_config,
 )
@@ -252,62 +250,6 @@ class TestProviderFactoryFunctions:
             create_weather_provider_from_config(
                 invalid_config, sample_location, start_date, end_date
             )
-
-
-class TestDefaultProviders:
-    """Test default provider creation functions."""
-
-    @pytest.fixture
-    def sample_location(self) -> GeospatialLocation:
-        """Create sample location for testing."""
-        return GeospatialLocation(latitude=37.7749, longitude=-122.4194)
-
-    @pytest.fixture
-    def sample_datetime_range(self) -> tuple[datetime, datetime]:
-        """Create sample datetime range for testing."""
-        start = datetime(2025, 7, 15, 8, 0, 0)
-        end = datetime(2025, 7, 15, 18, 0, 0)
-        return start, end
-
-    @patch("app.core.simulation.provider_config.create_price_provider_from_config")
-    def test_default_price_provider_creation(
-        self, mock_create, sample_location, sample_datetime_range
-    ):
-        """Test default price provider creation."""
-        start_date, end_date = sample_datetime_range
-        mock_provider = MagicMock()
-        mock_create.return_value = mock_provider
-
-        provider = create_default_price_provider(sample_location, start_date, end_date)
-
-        # Verify the factory was called with CSV config
-        mock_create.assert_called_once()
-        config_arg = mock_create.call_args[0][0]  # First positional argument
-
-        assert isinstance(config_arg, CSVPriceProviderConfig)
-        assert "sample_price_data.csv" in config_arg.data
-        assert provider == mock_provider
-
-    @patch("app.core.simulation.provider_config.create_weather_provider_from_config")
-    def test_default_weather_provider_creation(
-        self, mock_create, sample_location, sample_datetime_range
-    ):
-        """Test default weather provider creation."""
-        start_date, end_date = sample_datetime_range
-        mock_provider = MagicMock()
-        mock_create.return_value = mock_provider
-
-        provider = create_default_weather_provider(
-            sample_location, start_date, end_date
-        )
-
-        # Verify the factory was called with CSV config
-        mock_create.assert_called_once()
-        config_arg = mock_create.call_args[0][0]  # First positional argument
-
-        assert isinstance(config_arg, CSVWeatherProviderConfig)
-        assert "sample_weather_data.csv" in config_arg.data
-        assert provider == mock_provider
 
 
 class TestConfigurationValidation:

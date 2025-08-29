@@ -50,8 +50,8 @@ class AgentSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["BasicHeuristic"] = Field(
-        default="BasicHeuristic", description="Type of agent to create"
+    type: Literal["Heuristic"] = Field(
+        default="Heuristic", description="Type of agent to create"
     )
     parameters: Optional[dict] = Field(
         default=None, description="Agent-specific configuration parameters"

@@ -1,17 +1,17 @@
 """
 Tests for integrated agent configuration in environment system.
 
-Tests that the EnvironmentConfigFactory correctly creates agents from
+Tests that the PowerManagementEnvironment correctly creates agents from
 JSON specifications and integrates them with the environment.
 """
 
 import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from app.core.actors import BasicHeuristic
-from app.core.environment.config import create_environment_config_from_json
+from app.core.actors import Heuristic
 from app.core.environment.power_management_env import PowerManagementEnvironment
 
 
@@ -25,12 +25,13 @@ class TestEnvironmentAgentIntegration:
             Path(__file__).parent.parent.parent / "config" / "test_config_simple.json"
         )
 
-        # Create environment config from JSON
-        env_config = create_environment_config_from_json(config_path)
+        # Create environment from JSON using the new unified factory method
+        env = PowerManagementEnvironment.from_json(config_path)
+        env_config = env.config
 
         # Verify agent was created
         assert env_config.agent is not None
-        assert isinstance(env_config.agent, BasicHeuristic)
+        assert isinstance(env_config.agent, Heuristic)
 
         # Verify agent parameters match JSON specification
         agent = env_config.agent
@@ -43,7 +44,7 @@ class TestEnvironmentAgentIntegration:
         env = PowerManagementEnvironment(config=env_config)
         assert env is not None
         assert env.config.agent is not None
-        assert isinstance(env.config.agent, BasicHeuristic)
+        assert isinstance(env.config.agent, Heuristic)
 
     def test_environment_without_agent_config(self):
         """Test creating environment without agent configuration."""
@@ -66,7 +67,8 @@ class TestEnvironmentAgentIntegration:
             temp_config_path = Path(f.name)
 
         try:
-            env_config = create_environment_config_from_json(temp_config_path)
+            env = PowerManagementEnvironment.from_json(temp_config_path)
+            env_config = env.config
 
             # Verify no agent was created
             assert env_config.agent is None
@@ -83,23 +85,23 @@ class TestEnvironmentAgentIntegration:
         """Test agent configuration validation."""
         from pydantic import ValidationError
 
-        from app.core.actors import BasicHeuristicConfig
+        from app.core.actors import HeuristicConfig
 
-        # Test invalid parameters directly with BasicHeuristicConfig
+        # Test invalid parameters directly with HeuristicConfig
         with pytest.raises(ValidationError):
-            BasicHeuristicConfig(
+            HeuristicConfig(
                 max_lookahead_steps=-5,  # Invalid: negative value
                 charge_threshold_ratio=1.5,  # Invalid: > 1.0
             )
 
     def test_disabled_agent_config(self):
         """Test agent configuration with enabled=false."""
-        from app.core.actors import AgentConfig, BasicHeuristicConfig
+        from app.core.actors import AgentConfig, HeuristicConfig
 
         # Test disabled agent
         agent_config = AgentConfig(
-            type="BasicHeuristic",
-            parameters=BasicHeuristicConfig(max_lookahead_steps=12),
+            type="Heuristic",
+            parameters=HeuristicConfig(max_lookahead_steps=12),
             enabled=False,
         )
 
@@ -113,7 +115,8 @@ class TestEnvironmentAgentIntegration:
 
         config_path = test_config.environment_spec_path
 
-        env_config = create_environment_config_from_json(config_path)
+        env = PowerManagementEnvironment.from_json(config_path)
+        env_config = env.config
         agent = env_config.agent
 
         # Verify agent can be used for simulation
@@ -126,38 +129,23 @@ class TestEnvironmentAgentIntegration:
         mock_observation = {
             "market": {
                 "market_data": {
-                    "current_price": [50.0],
-                    "price_forecast": [45.0, 55.0, 60.0],
+                    "current_price_dollar_mwh": 50.0,
+                    "price_forecast_dollar_mwh": np.array([45.0, 55.0, 60.0]),
+                    "price_history_dollar_mwh": np.array([48.0, 49.0]),
                 }
             },
             "portfolios": {
                 "test_portfolio": {
                     "test_plant": {
-                        "ac_power_generation_potential": [10.0],
-                        "battery_state_of_charge": [0.5],
-                        "battery_energy_capacity": [30.0],
-                        "battery_min_state_of_charge": [0.1],
-                        "battery_max_state_of_charge": [0.9],
-                        "battery_max_discharge_power": [15.0],
+                        "ac_power_generation_potential_mw": 10.0,
+                        "battery_state_of_charge": 0.5,
                     }
                 }
             },
         }
 
-        # Convert to numpy arrays (as expected by the agent)
-        import numpy as np
-
-        for category, data in mock_observation.items():
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    if isinstance(value, dict):
-                        for k, v in value.items():
-                            if isinstance(v, list):
-                                value[k] = np.array(v)
-                    elif isinstance(value, list):
-                        data[key] = np.array(value)
-
         # Test agent action
         action = agent.get_action(mock_observation, datetime.datetime.now())
-        assert isinstance(action, dict)
-        assert len(action) > 0
+        assert isinstance(action, np.ndarray)
+        if isinstance(agent, Heuristic):
+            assert action.shape == (agent.num_plants,)

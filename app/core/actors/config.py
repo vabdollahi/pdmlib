@@ -12,13 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.utils.logging import get_logger
 
 from .base import Actor
-from .heuristic import BasicHeuristic
+from .heuristic import Heuristic
 
 logger = get_logger("agent_config")
 
 
-class BasicHeuristicConfig(BaseModel):
-    """Configuration parameters for BasicHeuristic agent."""
+class HeuristicConfig(BaseModel):
+    """Configuration parameters for Heuristic agent."""
 
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
 
@@ -46,6 +46,42 @@ class BasicHeuristicConfig(BaseModel):
         ge=0.0,
         le=0.5,
     )
+    max_discharge_intensity: float = Field(
+        default=0.8,
+        description="Maximum battery discharge intensity during high prices",
+        ge=0.1,
+        le=1.0,
+    )
+    max_charge_intensity: float = Field(
+        default=0.3,
+        description="Maximum battery charge intensity during low prices",
+        ge=0.1,
+        le=1.0,
+    )
+    price_trend_threshold: float = Field(
+        default=0.1,
+        description="Price trend threshold for battery decisions (10%)",
+        ge=0.01,
+        le=0.5,
+    )
+    strong_trend_threshold: float = Field(
+        default=0.15,
+        description="Strong price trend threshold for aggressive actions (15%)",
+        ge=0.05,
+        le=0.5,
+    )
+    min_solar_generation: float = Field(
+        default=0.3,
+        description="Minimum solar generation factor during low prices",
+        ge=0.1,
+        le=1.0,
+    )
+    default_solar_generation: float = Field(
+        default=0.6,
+        description="Default solar generation factor for neutral conditions",
+        ge=0.1,
+        le=1.0,
+    )
 
 
 class AgentConfig(BaseModel):
@@ -53,11 +89,11 @@ class AgentConfig(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True, extra="forbid")
 
-    type: Literal["BasicHeuristic"] = Field(
-        default="BasicHeuristic", description="Type of agent to create"
+    type: Literal["Heuristic"] = Field(
+        default="Heuristic", description="Type of agent to create"
     )
-    parameters: BasicHeuristicConfig = Field(
-        default_factory=BasicHeuristicConfig,
+    parameters: HeuristicConfig = Field(
+        default_factory=HeuristicConfig,
         description="Agent-specific configuration parameters",
     )
     enabled: bool = Field(
@@ -90,14 +126,14 @@ def create_agent_from_config(agent_config: AgentConfig) -> Optional[Actor]:
     logger.info(f"Creating agent of type: {agent_type}")
 
     try:
-        if agent_type == "BasicHeuristic":
-            # Parameters are always BasicHeuristicConfig due to Pydantic conversion
+        if agent_type == "Heuristic":
+            # For heuristic, we store config-less initialization
+            # The config will be injected during simulation setup
             params = agent_config.parameters.model_dump()
 
-            agent = BasicHeuristic(**params)
-            logger.info(
-                f"Successfully created BasicHeuristic with parameters: {params}"
-            )
+            # Create a placeholder agent that will be properly configured later
+            agent = Heuristic(config=None, **params)
+            logger.info(f"Successfully created Heuristic with parameters: {params}")
             return agent
 
         else:
@@ -106,26 +142,6 @@ def create_agent_from_config(agent_config: AgentConfig) -> Optional[Actor]:
     except Exception as e:
         logger.error(f"Failed to create agent {agent_type}: {e}")
         raise
-
-
-def create_default_agent() -> Actor:
-    """
-    Create a default agent with standard configuration.
-
-    Returns:
-        Actor: Default BasicHeuristic agent
-    """
-    logger.info("Creating default BasicHeuristic agent")
-    default_config = AgentConfig(
-        type="BasicHeuristic",
-        parameters=BasicHeuristicConfig(),
-        enabled=True,  # Ensure enabled for default agent
-    )
-    agent = create_agent_from_config(default_config)
-    if agent is None:
-        # This should never happen since we ensure enabled=True
-        raise RuntimeError("Failed to create default agent")
-    return agent
 
 
 def validate_agent_config(config_dict: Dict[str, Any]) -> AgentConfig:

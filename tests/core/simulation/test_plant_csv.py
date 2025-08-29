@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.core.environment.config import create_environment_config_from_json
+from app.core.environment.power_management_env import PowerManagementEnvironment
 from app.core.simulation.weather_provider import CSVWeatherProvider
 from app.core.utils.location import GeospatialLocation
 from tests.config import test_config
@@ -21,9 +21,9 @@ from tests.config import test_config
 @pytest.fixture
 def test_plant():
     """Create a test plant using spec-driven configuration."""
-    config = create_environment_config_from_json(test_config.environment_spec_path)
+    env = PowerManagementEnvironment.from_json(test_config.environment_spec_path)
     # Get the first plant from the first portfolio (has battery)
-    return config.portfolios[0].plants[0]
+    return env.config.portfolios[0].plants[0]
 
 
 @pytest.fixture

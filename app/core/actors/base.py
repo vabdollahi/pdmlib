@@ -3,7 +3,9 @@ Base actor interface for power management agents.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
+
+import numpy as np
 
 
 class Actor(ABC):
@@ -12,30 +14,27 @@ class Actor(ABC):
 
     An actor receives observations about the environment state and
     returns actions to control the power plant portfolio.
+
+    All actors must be compatible with the gymnasium interface:
+    - Observations: structured dictionaries
+    - Actions: numpy arrays in [-1, 1] range
     """
 
     @abstractmethod
-    def get_action(
-        self, observation: Dict[str, Any], timestamp: Any = None
-    ) -> Dict[str, Dict[str, float]]:
+    def get_action(self, observation: dict, timestamp: Any = None) -> np.ndarray:
         """
         Get the action to take given the current observation.
 
         Args:
-            observation: Current environment observation
+            observation: Current environment observation as structured dict
             timestamp: Current simulation timestamp (optional)
 
         Returns:
-            Action dictionary in format:
-            {
-                "portfolio_name": {
-                    "plant_name": {
-                        "net_power_target_mw": float,
-                        "battery_power_target_mw": float,  # optional
-                        "pv_curtailment_factor": float,    # optional (0.0-1.0)
-                    }
-                }
-            }
+            Action as numpy array with values in [-1, 1] range.
+            Each element corresponds to a plant's net power target:
+            - -1.0: minimum net power (full consumption/curtailment)
+            - +1.0: maximum net power (full generation + discharge)
+            -  0.0: middle of the range
         """
         raise NotImplementedError
 

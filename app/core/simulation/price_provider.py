@@ -53,6 +53,7 @@ class PriceProviderProtocol(Protocol):
     async def get_data(self) -> pd.DataFrame: ...
     def set_range(self, start_time: datetime, end_time: datetime) -> None: ...
     def validate_data_format(self, df: pd.DataFrame) -> bool: ...
+    async def get_price_at_time(self, timestamp: datetime) -> Optional[float]: ...
 
 
 class BasePriceProvider:
@@ -100,6 +101,44 @@ class BasePriceProvider:
         )
         price_ok = PriceColumns.PRICE_DOLLAR_MWH.value in df.columns
         return bool(ts_ok and price_ok)
+
+    async def get_price_at_time(self, timestamp: datetime) -> Optional[float]:
+        """
+        Get the price for a specific timestamp.
+
+        This is a basic implementation that fetches all data and then filters.
+        Providers should implement a more efficient version if possible.
+        """
+        all_data = await self.get_data()
+        if all_data.empty:
+            return None
+
+        # Ensure index is a DatetimeIndex for timestamp-based lookup
+        if not isinstance(all_data.index, pd.DatetimeIndex):
+            if PriceColumns.TIMESTAMP.value in all_data.columns:
+                all_data = all_data.set_index(PriceColumns.TIMESTAMP.value)
+            else:
+                logger.warning("Cannot get price at time: No timestamp index.")
+                return None
+
+        # Ensure the index is sorted before using asof
+        if not all_data.index.is_monotonic_increasing:
+            all_data = all_data.sort_index()
+
+        # Make timestamp a pandas Timestamp for timezone operations
+        pd_timestamp = pd.Timestamp(timestamp)
+        if all_data.index.tz is not None:
+            if pd_timestamp.tzinfo is None:
+                pd_timestamp = pd_timestamp.tz_localize(all_data.index.tz)
+            else:
+                pd_timestamp = pd_timestamp.tz_convert(all_data.index.tz)
+
+        try:
+            # Use asof for nearest-neighbor lookup
+            price = all_data[PriceColumns.PRICE_DOLLAR_MWH.value].asof(pd_timestamp)
+            return float(price) if pd.notna(price) else None
+        except (KeyError, IndexError):
+            return None
 
     # --- Helpers ------------------------------------------------------------
     def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -157,6 +196,7 @@ class CSVPriceProvider(BasePriceProvider):
     """Price provider that reads data from a CSV file."""
 
     def __init__(self, csv_file_path: Union[str, Path]):
+        super().__init__()
         self.csv_file_path = Path(csv_file_path)
         self._data_cache: Optional[pd.DataFrame] = None
 
@@ -203,9 +243,9 @@ class CSVPriceProvider(BasePriceProvider):
                         df.index = df.index.tz_convert("UTC")
 
                 mask = (df.index >= start_ts) & (df.index <= end_ts)
-                return df[mask].reset_index()
+                return df[mask]
 
-            return df.reset_index()
+            return df
         except Exception as e:
             logger.error(f"CSV provider error: {e}")
             return pd.DataFrame()
@@ -220,12 +260,12 @@ class CSVPriceProvider(BasePriceProvider):
                 raise ValueError("CSV file does not have expected format")
             # Sort and index by timestamp
             if PriceColumns.TIMESTAMP.value in df.columns:
-                df = df.sort_values(PriceColumns.TIMESTAMP.value)
-                # Force UTC timezone parsing
                 df[PriceColumns.TIMESTAMP.value] = pd.to_datetime(
                     df[PriceColumns.TIMESTAMP.value], utc=True
                 )
-                df = df.set_index(PriceColumns.TIMESTAMP.value)
+                df = df.sort_values(PriceColumns.TIMESTAMP.value).set_index(
+                    PriceColumns.TIMESTAMP.value
+                )
             return df
         except Exception as e:
             logger.error(f"Failed to load CSV: {e}")

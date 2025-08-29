@@ -9,8 +9,6 @@ models, and configuration tools.
 from .provider_config import (
     PriceProviderConfig,
     WeatherProviderConfig,
-    create_default_price_provider,
-    create_default_weather_provider,
     create_price_provider_from_config,
     create_weather_provider_from_config,
 )
@@ -20,6 +18,4 @@ __all__ = [
     "WeatherProviderConfig",
     "create_price_provider_from_config",
     "create_weather_provider_from_config",
-    "create_default_price_provider",
-    "create_default_weather_provider",
 ]

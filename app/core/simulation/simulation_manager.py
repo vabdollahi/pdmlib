@@ -7,304 +7,299 @@ pre-calculated power profiles, unified market data, and agent-driven portfolio
 management.
 """
 
+import datetime
 import json
-from datetime import datetime
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from app.core.actors import Actor
-from app.core.environment.config import (
+from app.core.actors import Actor, Heuristic
+from app.core.environment.power_management_env import (
     EnvironmentConfig,
-    create_environment_config_from_json,
+    PowerManagementEnvironment,
 )
-from app.core.environment.power_management_env import PowerManagementEnvironment
-from app.core.simulation.price_provider import BasePriceProvider
+from app.core.simulation.price_provider import PriceProviderProtocol
 from app.core.utils.logging import get_logger
 
 logger = get_logger("simulation_manager")
 
 
 class MarketData(BaseModel):
-    """Unified market data container with pre-loaded price information."""
+    """
+    Manages market data, including electricity prices, for the simulation.
+
+    This class acts as a unified data source for the environment, conforming
+    to the PriceProviderProtocol. It can aggregate data from multiple providers.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # Market configuration
-    price_providers: Dict[str, BasePriceProvider] = Field(
-        description="Price providers by portfolio name"
+    price_providers: Dict[str, PriceProviderProtocol] = Field(
+        default_factory=dict,
+        description=(
+            "Dictionary of price providers, keyed by portfolio name or 'default'"
+        ),
     )
+    _price_data: pd.DataFrame = PrivateAttr(default_factory=pd.DataFrame)
+    _start_time: datetime.datetime | None = PrivateAttr(default=None)
+    _end_time: datetime.datetime | None = PrivateAttr(default=None)
 
-    # Pre-loaded market data
-    price_data: Dict[str, pd.DataFrame] = Field(
-        default_factory=dict, description="Pre-loaded price data by portfolio"
-    )
-
-    market_rules: Dict[str, Any] = Field(
-        default_factory=dict, description="Market-specific rules and parameters"
-    )
-
-    async def load_market_data(self, start_time: datetime, end_time: datetime) -> None:
-        """Pre-load all market data for the simulation period."""
-        logger.info(f"Loading market data from {start_time} to {end_time}")
-
-        for portfolio_name, provider in self.price_providers.items():
-            try:
-                # Set provider date range
-                provider.set_range(start_time, end_time)
-
-                # Load price data
-                price_df = await provider.get_data()
-                self.price_data[portfolio_name] = price_df
-
-                logger.info(
-                    f"Loaded {len(price_df)} price records for portfolio "
-                    f"'{portfolio_name}'"
-                )
-
-            except Exception as e:
-                logger.error(f"Failed to load market data for '{portfolio_name}': {e}")
-                # Create empty DataFrame as fallback
-                self.price_data[portfolio_name] = pd.DataFrame()
-
-    def get_price_at_time(
-        self, portfolio_name: str, timestamp: datetime
-    ) -> Optional[float]:
-        """Get market price for a specific portfolio at a given time."""
-        if portfolio_name not in self.price_data:
-            return None
-
-        price_df = self.price_data[portfolio_name]
-        if price_df.empty:
-            return None
-
-        # Ensure all timestamps are timezone-aware UTC
-        ts = pd.Timestamp(timestamp, tz="UTC")
-
-        # Ensure price_df index is also timezone-aware UTC
-        if isinstance(price_df.index, pd.DatetimeIndex):
-            if price_df.index.tz is None:
-                price_df.index = price_df.index.tz_localize("UTC")
-            elif str(price_df.index.tz) != "UTC":
-                price_df.index = price_df.index.tz_convert("UTC")
-
-        # Get price from DataFrame
-        try:
-            price_col = "price_dollar_mwh"  # Standard column name
-            if ts in price_df.index:
-                # Direct match
-                if price_col in price_df.columns:
-                    return float(price_df[price_col].loc[ts])
-            else:
-                # Use nearest neighbor
-                idx_pos = price_df.index.get_indexer([ts], method="nearest")[0]
-                if idx_pos != -1 and price_col in price_df.columns:
-                    return float(price_df[price_col].iloc[idx_pos])
-        except Exception as e:
-            logger.warning(
-                f"Error getting price for {portfolio_name} at {timestamp}: {e}"
-            )
-
-        return None
-
-
-class SimulationResults(BaseModel):
-    """Container for complete simulation results."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # Simulation metadata
-    start_time: datetime
-    end_time: datetime
-    total_steps: int
-    configuration_file: Optional[str] = None
-
-    # Performance metrics
-    total_reward: float = 0.0
-    average_reward_per_step: float = 0.0
-
-    # Detailed results
-    step_results: list = Field(default_factory=list)
-    portfolio_results: Dict[str, pd.DataFrame] = Field(default_factory=dict)
-    power_profiles: Dict[str, Dict[str, pd.DataFrame]] = Field(default_factory=dict)
-
-    # Market analysis
-    market_performance: Dict[str, Any] = Field(default_factory=dict)
-
-    def add_step_result(
-        self,
-        step: int,
-        timestamp: datetime,
-        observation: Any,
-        action: Any,
-        reward: float,
-        info: Dict[str, Any],
-    ) -> None:
-        """Add results from a single simulation step."""
-        self.step_results.append(
-            {
-                "step": step,
-                "timestamp": timestamp.isoformat(),
-                "reward": reward,
-                "info": info,
-            }
+    def set_range(self, start_time: datetime.datetime, end_time: datetime.datetime):
+        """Set the simulation time range."""
+        self._start_time = start_time
+        self._end_time = end_time
+        logger.info(
+            f"Setting date range for market data from {start_time} to {end_time}"
         )
 
-        self.total_reward += reward
+    async def load_market_data(
+        self, start_time: datetime.datetime, end_time: datetime.datetime
+    ):
+        """Load price data from all providers for the given time range."""
+        # For now, we'll just use the first provider.
+        # A more complex implementation could merge data from multiple sources.
+        if not self.price_providers:
+            logger.warning("No price providers configured for MarketData.")
+            return
 
-        if self.total_steps > 0:
-            self.average_reward_per_step = self.total_reward / self.total_steps
+        provider = next(iter(self.price_providers.values()))
+        provider.set_range(start_time, end_time)
+        data = await provider.get_data()
+        if data is not None and not data.empty:
+            self._price_data = data
+            self.validate_data_format(self._price_data)
 
-    def save_to_file(self, output_path: Optional[Path] = None) -> Path:
-        """Save simulation results to file."""
-        if output_path is None:
-            timestamp_str = self.start_time.strftime("%Y%m%d_%H%M%S")
-            output_path = Path(f"simulation_results_{timestamp_str}.json")
+    async def get_data(self) -> pd.DataFrame:
+        """Get all available price data for the configured time range."""
+        if self._price_data.empty and self._start_time and self._end_time:
+            await self.load_market_data(self._start_time, self._end_time)
+        return self._price_data
 
-        # Convert to serializable format
-        results_dict = {
-            "simulation_config": {
-                "start_time": self.start_time.isoformat() if self.start_time else None,
-                "end_time": self.end_time.isoformat() if self.end_time else None,
-                "total_steps": self.total_steps,
-                "total_reward": self.total_reward,
-                "average_reward": self.average_reward_per_step,
-            },
-            "execution_steps": [],
+    async def get_price_at_time(self, timestamp: datetime.datetime) -> float | None:
+        """
+        Get the electricity price at a specific timestamp.
+
+        This method conforms to the PriceProviderProtocol. It uses the first
+        available price provider.
+        """
+        if not self.price_providers:
+            logger.warning("No price providers available in MarketData.")
+            return None
+
+        # Use the first provider to get the price
+        provider = next(iter(self.price_providers.values()))
+        return await provider.get_price_at_time(timestamp)
+
+    def validate_data_format(self, df: pd.DataFrame):
+        """Validate the format of the price data."""
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise ValueError("Price data index must be a DatetimeIndex.")
+        if "price_dollar_mwh" not in df.columns:
+            raise ValueError("Price data must include a 'price_dollar_mwh' column.")
+
+
+class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder for numpy types and datetime objects."""
+
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        if isinstance(o, datetime.datetime):
+            return o.isoformat()
+        return super().default(o)
+
+
+@dataclass
+class SimulationResults:
+    """Data class for storing simulation results."""
+
+    start_time: datetime.datetime
+    end_time: datetime.datetime
+    configuration_file: str
+    total_reward: float = 0.0
+    step_results: list[dict] = field(default_factory=list)
+    portfolio_results: dict = field(default_factory=dict)
+    power_profiles: dict = field(default_factory=dict)
+    market_performance: dict = field(default_factory=dict)
+
+    @property
+    def total_steps(self) -> int:
+        """Return the total number of steps recorded."""
+        return len(self.step_results)
+
+    @property
+    def average_reward_per_step(self) -> float:
+        """Calculate the average reward per step."""
+        if not self.step_results:
+            return 0.0
+        return self.total_reward / self.total_steps
+
+    def add_step_result(self, **kwargs):
+        """Add a result for a single simulation step."""
+        self.step_results.append(kwargs)
+        if "reward" in kwargs:
+            self.total_reward += kwargs["reward"]
+
+    def save_to_file(self, output_dir: str | Path = "simulation_results") -> Path:
+        """
+        Save the complete simulation results to a JSON file.
+
+        Args:
+            output_dir: The directory where results will be saved.
+
+        Returns:
+            The path to the saved results file.
+        """
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Create a serializable representation of the results
+        serializable_results = {
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat(),
+            "configuration_file": self.configuration_file,
+            "total_reward": self.total_reward,
+            "total_steps": self.total_steps,
+            "average_reward_per_step": self.average_reward_per_step,
+            "step_results": [
+                {
+                    **step,
+                    "timestamp": step["timestamp"].isoformat()
+                    if isinstance(step.get("timestamp"), datetime.datetime)
+                    else step.get("timestamp"),
+                }
+                for step in self.step_results
+            ],
+            "portfolio_results": self.portfolio_results,
+            "power_profiles": self.power_profiles,
+            "market_performance": self.market_performance,
         }
 
-        # Convert step results to JSON-serializable format
-        for step in self.step_results:
-            step_dict = {}
-            for key, value in step.items():
-                if hasattr(value, "isoformat"):  # datetime objects
-                    step_dict[key] = value.isoformat()
-                elif isinstance(value, np.ndarray):  # numpy arrays
-                    step_dict[key] = value.tolist()
-                elif hasattr(value, "__dict__"):  # complex objects
-                    step_dict[key] = str(value)
-                else:
-                    step_dict[key] = value
-            results_dict["execution_steps"].append(step_dict)
-
-        # Create output directory if needed
-        output_dir = Path("simulation_results")
-        output_dir.mkdir(exist_ok=True)
-
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"simulation_results_{timestamp}.json"
-        output_path = output_dir / filename
+        # Generate a unique filename
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = output_path / f"simulation_results_{timestamp_str}.json"
 
         # Save to file
-        with open(output_path, "w") as f:
-            json.dump(results_dict, f, indent=2, default=str)
+        with open(file_path, "w") as f:
+            json.dump(serializable_results, f, indent=4, cls=NumpyJSONEncoder)
 
-        logger.info(f"Simulation results saved to {output_path}")
-        return output_path
+        return file_path
 
 
-class SimulationManager(BaseModel):
+class SimulationManager:
     """
-    Main simulation orchestrator that provides complete automation from JSON
-    configuration.
+    Manages the complete, automated simulation workflow.
 
-    This achieves the ultimate goal: automatic simulation object creation with
-    validation, provider auto-creation, data loading, power profile pre-calculation,
-    market object creation, and agent-driven portfolio management.
+    This class integrates configuration loading, environment setup, agent control,
+    and results collection into a unified, automated process. It is designed
+    to be the primary entry point for running simulations.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    # Configuration
-    config_file_path: Path = Field(description="Path to JSON configuration file")
-    start_date_time_override: Optional[datetime] = Field(
-        default=None, description="Optional start time override"
-    )
-    end_date_time_override: Optional[datetime] = Field(
-        default=None, description="Optional end time override"
-    )
-
-    # Core components (created during initialization)
-    environment_config: Optional[EnvironmentConfig] = None
-    environment: Optional[PowerManagementEnvironment] = None
-    agent: Optional[Actor] = None
-    market: Optional[MarketData] = None
-
-    # Simulation state
-    initialized: bool = False
-    results: Optional[SimulationResults] = None
-
-    async def initialize(self) -> None:
+    def __init__(self, config_file_path: str | Path):
         """
-        Auto-create all components with validation.
+        Initialize the simulation manager with the path to a JSON config file.
 
-        This method implements the complete automation pipeline:
-        1. Load and validate JSON configuration
-        2. Auto-create environment, agent, and providers
-        3. Pre-load market data
-        4. Pre-calculate power generation profiles
-        5. Set up unified market object
+        Args:
+            config_file_path: Path to the JSON configuration file.
+        """
+        self.config_file_path = Path(config_file_path)
+        self.initialized = False
+        self.environment_config: EnvironmentConfig | None = None
+        self.environment: PowerManagementEnvironment | None = None
+        self.agent: Actor | None = None
+        self.market: MarketData | None = None
+        self.results: SimulationResults | None = None
+        self.start_time: datetime.datetime | None = None
+        self.end_time: datetime.datetime | None = None
+
+    async def _initialize(self):
+        """
+        Initialize the complete simulation environment from configuration.
         """
         logger.info("Initializing simulation from JSON configuration...")
         logger.info(f"Configuration file: {self.config_file_path}")
 
         # Step 1: Load and validate JSON configuration
         try:
-            self.environment_config = create_environment_config_from_json(
-                self.config_file_path,
-                start_date_time=self.start_date_time_override,
-                end_date_time=self.end_date_time_override,
+            # Create environment config from JSON spec using the new factory method
+            self.environment = PowerManagementEnvironment.from_json(
+                self.config_file_path
             )
-            logger.info("✓ JSON configuration loaded and validated")
+            self.environment_config = self.environment.config
+            self.start_time = self.environment_config.start_date_time
+            self.end_time = self.environment_config.end_date_time
+            logger.info("✓ JSON configuration loaded and environment created")
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
             raise
 
-        # Step 2: Create environment (automatic validation)
-        try:
-            self.environment = PowerManagementEnvironment(
-                config=self.environment_config
-            )
-            logger.info("✓ Power management environment created")
-        except Exception as e:
-            logger.error(f"Failed to create environment: {e}")
-            raise
-
-        # Step 3: Get agent (auto-created or create fallback)
+        # Step 2: Get agent (auto-created from configuration)
         try:
             if self.environment_config.agent:
                 self.agent = self.environment_config.agent
+
+                # If it's a Heuristic, configure it with the environment config
+                if isinstance(self.agent, Heuristic):
+                    self.agent.configure(self.environment_config)
+                    logger.info("✓ Heuristic configured with environment config")
+
                 logger.info(f"✓ Agent auto-created: {type(self.agent).__name__}")
             else:
-                # Create default BasicHeuristic as fallback
-                from app.core.actors import BasicHeuristic
-
-                self.agent = BasicHeuristic(
-                    max_lookahead_steps=8,
-                    charge_threshold_ratio=0.3,
-                    discharge_threshold_ratio=0.7,
-                    soc_buffer=0.1,
+                raise ValueError(
+                    "No agent configuration found. Agent configuration is required."
                 )
-                logger.info("✓ Default BasicHeuristic agent created (fallback)")
         except Exception as e:
             logger.error(f"Failed to create agent: {e}")
             raise
 
-        # Step 4: Create unified market data object
+        # Step 3: Create and configure market data object
         try:
-            await self._create_market_data()
-            logger.info("✓ Market data object created")
+            # Get price provider from the environment's configuration portfolios
+            price_provider = None
+            if self.environment_config.portfolios:
+                for portfolio in self.environment_config.portfolios:
+                    for plant in portfolio.plants:
+                        if (
+                            hasattr(plant, "revenue_calculator")
+                            and plant.revenue_calculator
+                            and hasattr(plant.revenue_calculator, "price_provider")
+                        ):
+                            price_provider = plant.revenue_calculator.price_provider
+                            break
+                    if price_provider:
+                        break
+
+            if price_provider:
+                self.market = MarketData(price_providers={"default": price_provider})
+                self.market.set_range(self.start_time, self.end_time)
+                logger.info("✓ Market data object created")
+            else:
+                logger.warning("No price provider configured.")
+                self.market = MarketData()
+
         except Exception as e:
             logger.error(f"Failed to create market data: {e}")
             raise
 
+        # Step 4.5: Connect market data to environment
+        try:
+            self.environment.set_market_data(self.market)
+            logger.info("✓ Market data connected to environment")
+        except Exception as e:
+            logger.error(f"Failed to connect market data to environment: {e}")
+            raise
+
         # Step 5: Pre-calculate power generation profiles
         try:
-            await self._precalculate_power_profiles()
+            await self.pre_calculate_power_profiles()
             logger.info("✓ Power generation profiles pre-calculated")
         except Exception as e:
             logger.error(f"Failed to pre-calculate power profiles: {e}")
@@ -312,239 +307,104 @@ class SimulationManager(BaseModel):
 
         # Step 6: Initialize results container
         self.results = SimulationResults(
-            start_time=self.environment_config.start_date_time,
-            end_time=self.environment_config.end_date_time,
-            total_steps=0,
+            start_time=self.start_time,
+            end_time=self.end_time,
             configuration_file=str(self.config_file_path),
         )
-
-        self.initialized = True
         logger.info("🎉 Simulation initialization complete!")
+        self.initialized = True
 
-    async def _create_market_data(self) -> None:
-        """Create unified market data object with price providers."""
-        if not self.environment_config:
-            raise RuntimeError("Environment config not initialized")
-
-        price_providers = {}
-
-        for portfolio in self.environment_config.portfolios:
-            # Extract price providers from portfolio market configuration
-            # This uses the existing provider creation infrastructure
-            portfolio_name = portfolio.config.name
-
-            # Try to get the first price provider from the portfolio's market
-            if hasattr(portfolio, "plants") and portfolio.plants:
-                # Get price provider from first plant (they should all share the
-                # same market)
-                first_plant = portfolio.plants[0]
-                if (
-                    hasattr(first_plant, "revenue_calculator")
-                    and first_plant.revenue_calculator
-                    and hasattr(first_plant.revenue_calculator, "price_provider")
-                ):
-                    price_providers[portfolio_name] = (
-                        first_plant.revenue_calculator.price_provider
-                    )
-                else:
-                    logger.warning(
-                        f"No price provider found for portfolio '{portfolio_name}'"
-                    )
-            else:
-                logger.warning(f"No plants found in portfolio '{portfolio_name}'")
-
-        self.market = MarketData(price_providers=price_providers)
-
-        # Pre-load all market data
-        await self.market.load_market_data(
-            self.environment_config.start_date_time,
-            self.environment_config.end_date_time,
-        )
-
-    async def _precalculate_power_profiles(self) -> None:
+    async def pre_calculate_power_profiles(self):
         """Pre-calculate power generation profiles for all plants."""
-        if not self.environment_config:
-            raise RuntimeError("Environment config not initialized")
-
-        logger.info("Pre-calculating power generation profiles...")
-
-        for portfolio in self.environment_config.portfolios:
-            for plant in portfolio.plants:
-                try:
-                    # Pre-calculate PV generation profile for entire simulation period
-                    await self._precalculate_plant_profile(plant)
-                    logger.debug(
-                        f"Pre-calculated profile for plant '{plant.config.name}'"
-                    )
-
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to pre-calculate profile for plant "
-                        f"'{plant.config.name}': {e}"
-                    )
-
-    async def _precalculate_plant_profile(self, plant) -> None:
-        """Pre-calculate power generation profile for a single plant."""
-        if not self.environment_config:
-            raise RuntimeError("Environment config not initialized")
-
-        # Set the PV model to cache the entire simulation period
-        if hasattr(plant, "pv_model"):
-            # Set cached range to the full simulation period
-            plant.pv_model.set_cached_range(
-                self.environment_config.start_date_time,
-                self.environment_config.end_date_time,
+        if not self.environment_config or not self.start_time or not self.end_time:
+            raise RuntimeError(
+                "Environment must be initialized before pre-calculating power profiles."
             )
 
-            # Run simulation to populate cache
-            await plant.pv_model.run_simulation(force_refresh=False)
+        logger.info("Pre-calculating power generation profiles...")
+        for portfolio in self.environment_config.portfolios:
+            for plant in portfolio.plants:
+                # Set the date range on the PV model's cache and run the simulation
+                # to pre-calculate the generation profile.
+                plant.pv_model.set_cached_range(self.start_time, self.end_time)
+                await plant.pv_model.run_simulation(force_refresh=True)
 
-    async def run_simulation(
-        self, max_steps: Optional[int] = None
-    ) -> SimulationResults:
+    async def run_simulation(self, max_steps: int | None = None) -> "SimulationResults":
         """
         Execute complete simulation workflow.
 
         This runs the full agent-driven portfolio management simulation
         using pre-calculated profiles and unified market data.
         """
-        if not self.initialized:
-            raise RuntimeError("Simulation not initialized. Call initialize() first.")
-
-        if not self.environment or not self.agent or not self.results:
-            raise RuntimeError("Simulation components not properly initialized")
+        if (
+            not self.initialized
+            or not self.environment
+            or not self.agent
+            or not self.results
+        ):
+            raise RuntimeError(
+                "Simulation must be initialized before running. "
+                "Call create_simulation_from_json() first."
+            )
 
         logger.info("Starting simulation execution...")
-
-        # Reset environment
         observation, info = await self.environment.reset_async()
-        logger.info("Environment reset completed")
+        self.results.add_step_result(
+            step=0,
+            timestamp=self.environment.timestamp,
+            observation=observation,
+            action=None,
+            reward=0.0,
+            info=info,
+        )
 
-        step = 0
         terminated = False
         truncated = False
+        step_count = 0
 
-        while not (terminated or truncated):
-            if max_steps and step >= max_steps:
-                logger.info(f"Reached maximum steps limit: {max_steps}")
+        while not terminated and not truncated:
+            action = self.agent.get_action(observation)
+            (
+                observation,
+                reward,
+                terminated,
+                truncated,
+                info,
+            ) = await self.environment.step_async(action)
+
+            step_count += 1
+            self.results.add_step_result(
+                step=step_count,
+                timestamp=self.environment.timestamp,
+                observation=observation,
+                action=action,
+                reward=reward,
+                info=info,
+            )
+
+            if max_steps and step_count >= max_steps:
+                logger.info(f"Simulation reached max_steps ({max_steps}).")
                 break
 
-            try:
-                # Get current timestamp
-                current_time = self.environment.timestamp
-                logger.debug(f"Step {step + 1}: {current_time}")
-
-                # Get observation for agent
-                raw_observation = await (
-                    self.environment.observation_factory.create_observation(
-                        current_time
-                    )
-                )
-
-                # Get agent action using observations
-                agent_action = self.agent.get_action(raw_observation, current_time)
-
-                # Convert agent action to environment format
-                env_action = self._convert_agent_action_to_env_action(agent_action)
-
-                # Execute step
-                (
-                    observation,
-                    reward,
-                    terminated,
-                    truncated,
-                    info,
-                ) = await self.environment.step_async(env_action)
-
-                # Record results
-                self.results.add_step_result(
-                    step=step + 1,
-                    timestamp=current_time,
-                    observation=observation,
-                    action=agent_action,
-                    reward=reward,
-                    info=info,
-                )
-
-                step += 1
-
-                if step % 10 == 0:  # Log progress every 10 steps
-                    logger.info(f"Completed step {step}, reward: {reward:.4f}")
-
-            except Exception as e:
-                logger.error(f"Error during simulation step {step + 1}: {e}")
-                break
-
-        # Finalize results
-        self.results.total_steps = step
-        if step > 0:
-            self.results.average_reward_per_step = self.results.total_reward / step
-
-        logger.info("🏁 Simulation execution completed!")
-        logger.info(f"Total steps: {step}")
-        logger.info(f"Total reward: {self.results.total_reward:.4f}")
-        logger.info(
-            f"Average reward per step: {self.results.average_reward_per_step:.4f}"
-        )
-
+        logger.info("Simulation execution finished.")
         return self.results
 
-    def _convert_agent_action_to_env_action(self, agent_action: Dict) -> Any:
-        """Convert agent action format to environment action format."""
-        import numpy as np
 
-        if not self.environment:
-            raise RuntimeError("Environment not initialized")
-
-        # Extract power targets from agent action
-        gym_action = []
-
-        for portfolio_name, plants_dict in agent_action.items():
-            if isinstance(plants_dict, dict):
-                for plant_name, plant_action in plants_dict.items():
-                    if isinstance(plant_action, dict):
-                        # Get target power (prefer net_power_target_mw)
-                        target = plant_action.get(
-                            "net_power_target_mw",
-                            plant_action.get("ac_power_generation_target_mw", 0.0),
-                        )
-                    else:
-                        target = float(plant_action) if plant_action else 0.0
-
-                    # Normalize to [-1, 1] range (simple normalization)
-                    normalized = np.clip(target / 10.0, -1.0, 1.0)
-                    gym_action.append(normalized)
-
-        # Ensure correct action space size
-        action_len = (
-            self.environment.action_space.shape[0]
-            if self.environment.action_space.shape
-            else 1
-        )
-        while len(gym_action) < action_len:
-            gym_action.append(0.0)
-
-        return np.array(gym_action[:action_len], dtype=np.float32)
-
-
-# Convenience factory function
 async def create_simulation_from_json(
     config_file_path: str | Path,
-    start_time_override: Optional[datetime] = None,
-    end_time_override: Optional[datetime] = None,
-) -> SimulationManager:
+) -> "SimulationManager":
     """
-    Create and initialize a complete simulation from JSON configuration.
+    Factory function to create and initialize a SimulationManager from a JSON file.
 
-    This is the main entry point for achieving the ultimate automation goal.
+    This is the recommended way to create a simulation, as it ensures all
+    components are properly initialized and connected.
+
+    Args:
+        config_file_path: Path to the JSON configuration file.
+
+    Returns:
+        An initialized SimulationManager instance.
     """
-    config_path = Path(config_file_path)
-
-    simulation = SimulationManager(
-        config_file_path=config_path,
-        start_date_time_override=start_time_override,
-        end_date_time_override=end_time_override,
-    )
-
-    await simulation.initialize()
+    simulation = SimulationManager(config_file_path)
+    await simulation._initialize()
     return simulation

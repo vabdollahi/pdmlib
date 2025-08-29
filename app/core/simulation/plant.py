@@ -117,6 +117,18 @@ class PlantConfiguration(BaseModel):
         default=0.0, description="Minimum net power to grid in MW", ge=0.0
     )
 
+    # Ramp rate constraints
+    ramp_up_mw_per_min: float = Field(
+        default=float("inf"),
+        description="Maximum ramp up rate in MW per minute",
+        gt=0.0,
+    )
+    ramp_down_mw_per_min: float = Field(
+        default=float("inf"),
+        description="Maximum ramp down rate in MW per minute",
+        gt=0.0,
+    )
+
     # Market participation settings
     enable_market_participation: bool = Field(
         default=True, description="Enable electricity market participation"
@@ -164,6 +176,7 @@ class SolarBatteryPlant(BaseModel):
     # Plant state
     _operation_mode: PlantOperationMode = PlantOperationMode.IDLE
     _current_timestamp: Optional[datetime.datetime] = None
+    _previous_net_power_mw: float = 0.0  # Track previous power for ramp rate validation
     pv_cache_enabled: bool = Field(default=True, exclude=True)
     # Simple in-memory cache of PV potential by timestamp
     # to avoid duplicate work within a step
@@ -387,6 +400,77 @@ class SolarBatteryPlant(BaseModel):
             logger.error(f"Error calculating PV generation potential: {e}")
             return 0.0
 
+    async def get_pv_dc_generation_potential(
+        self, timestamp: datetime.datetime, force_refresh: bool = False
+    ) -> float:
+        """
+        Get PV DC generation potential at given timestamp.
+
+        Args:
+            timestamp: Timestamp for generation calculation
+            force_refresh: Force refresh of cached data
+
+        Returns:
+            PV DC generation potential in MW
+        """
+        try:
+            # Check in-memory cache first for efficiency within same step
+            if not force_refresh:
+                cache_key = f"dc_{pd.Timestamp(timestamp).isoformat()}"
+                if cache_key in self._pv_potential_cache:
+                    return max(0.0, float(self._pv_potential_cache[cache_key]))
+
+            # Set day-scoped cache range to optimize data fetching
+            day_start = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = timestamp.replace(hour=23, minute=0, second=0, microsecond=0)
+            self.pv_model.set_cached_range(day_start, day_end)
+
+            # Run PV simulation to get generation data (with caching support)
+            pv_results = await self.pv_model.run_simulation(force_refresh=force_refresh)
+
+            # Find the closest timestamp in results
+            ts = pd.Timestamp(timestamp)
+
+            # Ensure timezone compatibility for comparison
+            if isinstance(pv_results.index, pd.DatetimeIndex):
+                if pv_results.index.tz is not None and ts.tz is None:
+                    ts = ts.tz_localize(pv_results.index.tz)
+                elif pv_results.index.tz is None and ts.tz is not None:
+                    ts = ts.tz_localize(None)
+                elif pv_results.index.tz is not None and ts.tz is not None:
+                    ts = ts.tz_convert(pv_results.index.tz)
+
+            if ts in pv_results.index:
+                generation_mw = (
+                    pv_results[PVLibResultsColumns.DC.value].loc[ts] / 1e6
+                )  # Convert W to MW
+            else:
+                # Use nearest neighbor interpolation
+                series = pv_results[PVLibResultsColumns.DC.value]
+                if not series.empty:
+                    idx_pos = series.index.get_indexer([ts], method="nearest")[0]
+                    if idx_pos != -1:
+                        generation_mw = series.iloc[idx_pos] / 1e6
+                    else:
+                        generation_mw = 0.0
+                else:
+                    generation_mw = 0.0
+
+            generation_mw = max(0.0, generation_mw)
+
+            # Store in in-memory cache for reuse within same step
+            cache_key = f"dc_{pd.Timestamp(timestamp).isoformat()}"
+            # Keep cache bounded to prevent memory growth
+            if len(self._pv_potential_cache) > 1000:
+                self._pv_potential_cache.clear()
+            self._pv_potential_cache[cache_key] = float(generation_mw)
+
+            return generation_mw
+
+        except Exception as e:
+            logger.error(f"Error calculating PV DC generation potential: {e}")
+            return 0.0
+
     def get_battery_available_power(
         self, interval_minutes: float = 60.0
     ) -> Tuple[float, float]:
@@ -429,6 +513,53 @@ class SolarBatteryPlant(BaseModel):
                 return True
         return False
 
+    def _validate_ramp_rate(
+        self, target_net_power_mw: float, interval_minutes: float
+    ) -> Tuple[float, bool]:
+        """
+        Validate and enforce ramp rate constraints.
+
+        Args:
+            target_net_power_mw: Desired net power output
+            interval_minutes: Time interval for the operation
+
+        Returns:
+            Tuple of (constrained_power_mw, is_within_limits)
+        """
+        # Calculate power change
+        power_change_mw = target_net_power_mw - self._previous_net_power_mw
+
+        # Calculate maximum allowed change based on ramp rates
+        max_ramp_up_mw = self.config.ramp_up_mw_per_min * interval_minutes
+        max_ramp_down_mw = self.config.ramp_down_mw_per_min * interval_minutes
+
+        # Apply ramp rate constraints
+        if power_change_mw > max_ramp_up_mw:
+            # Ramp up too fast
+            constrained_power = self._previous_net_power_mw + max_ramp_up_mw
+            is_within_limits = False
+            logger.warning(
+                f"Ramp up rate violation: requested {power_change_mw:.2f} MW/interval, "
+                f"max allowed {max_ramp_up_mw:.2f} MW/interval. "
+                f"Limiting to {constrained_power:.2f} MW"
+            )
+        elif power_change_mw < -max_ramp_down_mw:
+            # Ramp down too fast
+            constrained_power = self._previous_net_power_mw - max_ramp_down_mw
+            is_within_limits = False
+            logger.warning(
+                f"Ramp down rate violation: requested "
+                f"{abs(power_change_mw):.2f} MW/interval, "
+                f"max allowed {max_ramp_down_mw:.2f} MW/interval. "
+                f"Limiting to {constrained_power:.2f} MW"
+            )
+        else:
+            # Within ramp rate limits
+            constrained_power = target_net_power_mw
+            is_within_limits = True
+
+        return constrained_power, is_within_limits
+
     async def get_available_power(
         self,
         timestamp: datetime.datetime,
@@ -452,10 +583,19 @@ class SolarBatteryPlant(BaseModel):
         # Get PV generation potential (reuse if provided)
         if pv_potential_mw is None:
             pv_potential_mw = await self.get_pv_generation_potential(timestamp)
+            logger.info(
+                f"DEBUG: get_available_power - PV potential: {pv_potential_mw:.6f}MW "
+                f"at {timestamp}"
+            )
 
         # Get battery capabilities
         battery_charge_mw, battery_discharge_mw = self.get_battery_available_power(
             interval_minutes
+        )
+
+        logger.info(
+            f"DEBUG: get_available_power - Battery discharge: "
+            f"{battery_discharge_mw:.2f}MW, charge: {battery_charge_mw:.2f}MW"
         )
 
         # Maximum generation: PV + battery discharge
@@ -465,6 +605,11 @@ class SolarBatteryPlant(BaseModel):
 
         # Maximum consumption: battery charging (limited by PV curtailment)
         max_consumption_mw = min(battery_charge_mw, pv_potential_mw)
+
+        logger.info(
+            f"DEBUG: get_available_power - Final max_gen: {max_generation_mw:.6f}MW, "
+            f"max_cons: {max_consumption_mw:.6f}MW"
+        )
 
         return max_generation_mw, max_consumption_mw
 
@@ -486,6 +631,7 @@ class SolarBatteryPlant(BaseModel):
             Tuple of (actual_net_power_mw, plant_state, operation_valid)
         """
         self._current_timestamp = timestamp
+        operation_valid = True  # Initialize operation validity flag
 
         # Check maintenance mode
         if self.is_in_maintenance(timestamp):
@@ -508,6 +654,15 @@ class SolarBatteryPlant(BaseModel):
             self.config.min_net_power_mw,
             min(target_net_power_mw, self.config.max_net_power_mw),
         )
+
+        # Apply ramp rate constraints
+        ramp_constrained_power, ramp_valid = self._validate_ramp_rate(
+            target_net_power_mw, interval_minutes
+        )
+        target_net_power_mw = ramp_constrained_power
+
+        if not ramp_valid:
+            operation_valid = False
 
         # Get PV generation potential
         pv_potential_mw = await self.get_pv_generation_potential(timestamp)
@@ -575,6 +730,9 @@ class SolarBatteryPlant(BaseModel):
             timestamp, pv_generation_mw, actual_battery_power_mw
         )
 
+        # Update previous power for next ramp rate calculation
+        self._previous_net_power_mw = actual_net_power_mw
+
         logger.debug(
             f"Plant dispatch: target={target_net_power_mw:.2f}MW, "
             f"actual={actual_net_power_mw:.2f}MW, "
@@ -605,13 +763,15 @@ class SolarBatteryPlant(BaseModel):
         # Add revenue calculation if available
         if self.revenue_calculator and self.config.enable_market_participation:
             try:
-                # TODO: Implement real-time revenue calculation
-                # This requires integrating with the SolarRevenueCalculator
-                # For now, use placeholder but log the limitation
+                # Revenue is calculated in the action system for rewards
+                # This state field is for reporting/debugging only
+                # Note: Full revenue calculation requires async calls to price providers
                 state[PlantStateColumns.REVENUE_DOLLAR.value] = 0.0
-                logger.debug("Revenue calculation placeholder - needs implementation")
+                logger.debug(
+                    "Revenue state placeholder - actual revenue in action system"
+                )
             except Exception as e:
-                logger.warning(f"Error calculating revenue: {e}")
+                logger.warning(f"Error in revenue state reporting: {e}")
                 state[PlantStateColumns.REVENUE_DOLLAR.value] = 0.0
         else:
             state[PlantStateColumns.REVENUE_DOLLAR.value] = 0.0
@@ -678,7 +838,8 @@ class SolarBatteryPlant(BaseModel):
         """Reset all batteries to their initial state."""
         for battery in self.batteries:
             battery.reset_state()
-        logger.info("Reset all batteries to initial state")
+        self._previous_net_power_mw = 0.0  # Reset power tracking
+        logger.info("Reset all batteries and power tracking to initial state")
 
     def get_system_capacity(self) -> Dict[str, float]:
         """Get plant capacity information."""

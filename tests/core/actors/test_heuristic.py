@@ -10,18 +10,17 @@ import datetime
 import numpy as np
 import pytest
 
-from app.core.actors import BasicHeuristic
-from app.core.environment.actions import ActionName
-from app.core.environment.observations import ObservationName
+from app.core.actors import Heuristic
+from app.core.simulation.price_provider import CSVPriceProvider
 from tests.config import test_config
 
 
 class TestHeuristicActor:
-    """Test the BasicHeuristic actor with the observation system."""
+    """Test the Heuristic actor with the observation system."""
 
     def test_basic_heuristic_creation(self):
-        """Test creating a BasicHeuristic agent."""
-        heuristic = BasicHeuristic(max_lookahead_steps=12)
+        """Test creating a Heuristic agent."""
+        heuristic = Heuristic(max_lookahead_steps=12)
 
         assert heuristic.max_lookahead_steps == 12
         assert heuristic.charge_threshold_ratio == 0.3
@@ -29,166 +28,144 @@ class TestHeuristicActor:
         assert heuristic.soc_buffer == 0.1
 
     @pytest.mark.asyncio
-    async def test_heuristic_with_observations(self):
+    async def test_heuristic_with_observations(self, test_data_dir):
         """Test heuristic agent with observations."""
-        # Get observation factory from environment using spec-driven config
-        from app.core.environment.config import create_environment_config_from_json
         from app.core.environment.observations import ObservationFactory
+        from app.core.environment.power_management_env import PowerManagementEnvironment
+        from app.core.simulation.simulation_manager import MarketData
 
-        config = create_environment_config_from_json(test_config.environment_spec_path)
+        env = PowerManagementEnvironment.from_json(test_config.environment_spec_path)
+        config = env.config
         portfolios = config.portfolios
+
+        # Create a price provider for the observation factory
+        price_provider = CSVPriceProvider(
+            csv_file_path=test_data_dir / "sample_price_data.csv"
+        )
+        market_data = MarketData(price_providers={"default": price_provider})
+        await market_data.load_market_data(config.start_date_time, config.end_date_time)
 
         obs_factory = ObservationFactory(
             portfolios=portfolios,
             historic_data_intervals=6,
             forecast_data_intervals=12,
+            market_data=market_data,
         )
+        heuristic = Heuristic(max_lookahead_steps=6)
+        heuristic.configure(config)  # Configure agent with env spec
 
-        # Create heuristic agent
-        heuristic = BasicHeuristic(max_lookahead_steps=6)
-
-        # Get current timestamp
-        timestamp = datetime.datetime.now(datetime.timezone.utc)
-
-        # Get observations
+        timestamp = config.start_date_time + datetime.timedelta(hours=4)
         observation = await obs_factory.create_observation(timestamp)
 
-        # Verify observation structure
         assert "market" in observation
         assert "portfolios" in observation
         assert "market_data" in observation["market"]
 
-        # Check that market observations contain required fields
         market_data = observation["market"]["market_data"]
-        assert ObservationName.CURRENT_PRICE in market_data
-        assert ObservationName.PRICE_FORECAST in market_data
+        assert "current_price_dollar_mwh" in market_data
+        assert "price_forecast_dollar_mwh" in market_data
 
-        # Check portfolio structure
         assert len(observation["portfolios"]) > 0
         portfolio_name = list(observation["portfolios"].keys())[0]
         portfolio_obs = observation["portfolios"][portfolio_name]
 
-        # Check plant observations
-        assert len(portfolio_obs) > 0
         plant_name = list(portfolio_obs.keys())[0]
         plant_obs = portfolio_obs[plant_name]
 
-        # Verify plant observations contain fields
-        assert ObservationName.AC_POWER_GENERATION_POTENTIAL in plant_obs
-        assert ObservationName.BATTERY_STATE_OF_CHARGE in plant_obs
+        assert "ac_power_generation_potential_mw" in plant_obs
+        assert "battery_state_of_charge" in plant_obs
 
-        # Test heuristic action
-        action = heuristic.get_action(observation, timestamp)
+        action = heuristic.get_action(observation)
 
-        # Verify action structure
-        assert isinstance(action, dict)
-        assert portfolio_name in action
-        assert plant_name in action[portfolio_name]
+        assert isinstance(action, np.ndarray)
+        assert action.shape == (heuristic.num_plants,)
+        assert np.all(action >= -1.0) and np.all(action <= 1.0)
 
-        # Verify action contains expected keys
-        plant_action = action[portfolio_name][plant_name]
-        assert ActionName.AC_POWER_GENERATION_TARGET.value in plant_action
-        assert ActionName.BATTERY_POWER_TARGET.value in plant_action
+    def test_heuristic_optimal_action_logic(self):
+        """Test the core logic of the _get_optimal_action method."""
+        heuristic = Heuristic()
+        # Normalized values for testing
+        ac_potential = 0.8
+        soc = 0.5
+        prices = np.array([0.1, 0.15, 0.2, 0.8, 0.85, 0.9])
+        history = prices[:2]
+        forecast = prices[3:]
 
-        # Verify action values are reasonable
-        ac_target = plant_action[ActionName.AC_POWER_GENERATION_TARGET.value]
-        battery_target = plant_action[ActionName.BATTERY_POWER_TARGET.value]
-        assert isinstance(ac_target, (int, float))
-        assert isinstance(battery_target, (int, float))
-        assert ac_target >= 0
-
-    def test_heuristic_battery_logic(self):
-        """Test heuristic battery charging/discharging logic."""
-        heuristic = BasicHeuristic(
-            max_lookahead_steps=4,
-            charge_threshold_ratio=0.3,
-            discharge_threshold_ratio=0.7,
+        # Scenario 1: Low current price, rising forecast -> Charge
+        # current_price is at 20th percentile, forecast is high
+        action_charge = heuristic._get_optimal_action(
+            0.18, forecast, history, ac_potential, soc
         )
+        assert action_charge < ac_potential  # Should charge
 
-        # Test battery action with low price (should charge)
-        battery_action_low = heuristic._determine_battery_action(
-            current_price=20.0,
-            price_forecast=np.array([30.0, 40.0, 50.0, 60.0]),
-            current_soc=0.5,
-            min_soc=0.2,
-            max_soc=0.8,
-            max_battery_power=5.0,
+        # Scenario 2: High current price -> Discharge
+        # current_price is at 95th percentile
+        action_discharge = heuristic._get_optimal_action(
+            0.88, forecast, history, ac_potential, soc
         )
-        assert battery_action_low < 0  # Negative = charging
+        assert action_discharge > 0  # Should discharge
 
-        # Test battery action with high price (should discharge)
-        battery_action_high = heuristic._determine_battery_action(
-            current_price=80.0,
-            price_forecast=np.array([30.0, 40.0, 50.0, 60.0]),
-            current_soc=0.5,
-            min_soc=0.2,
-            max_soc=0.8,
-            max_battery_power=5.0,
+        # Scenario 3: Medium price, neutral forecast -> Generate from solar
+        action_hold = heuristic._get_optimal_action(
+            0.48, np.array([0.5, 0.51]), history, ac_potential, soc
         )
-        assert battery_action_high > 0  # Positive = discharging
+        assert action_hold > 0
+        assert abs(action_hold - ac_potential) < 0.1
 
-        # Test SOC constraints (low SOC should force charging)
-        battery_action_low_soc = heuristic._determine_battery_action(
-            current_price=80.0,  # High price
-            price_forecast=np.array([30.0, 40.0, 50.0, 60.0]),
-            current_soc=0.15,  # Very low SOC
-            min_soc=0.2,
-            max_soc=0.8,
-            max_battery_power=5.0,
+        # Scenario 4: High price but low SOC -> Limit discharge
+        action_low_soc = heuristic._get_optimal_action(
+            0.9, forecast, history, ac_potential, battery_soc=0.1
         )
-        assert battery_action_low_soc < 0  # Should charge despite high price
+        assert action_low_soc >= 0  # Should not charge, but discharge is limited
 
-        # Test SOC constraints (high SOC should force discharging)
-        battery_action_high_soc = heuristic._determine_battery_action(
-            current_price=20.0,  # Low price
-            price_forecast=np.array([30.0, 40.0, 50.0, 60.0]),
-            current_soc=0.85,  # Very high SOC
-            min_soc=0.2,
-            max_soc=0.8,
-            max_battery_power=5.0,
+        # Scenario 5: Low price but high SOC -> Limit charge
+        action_high_soc = heuristic._get_optimal_action(
+            0.1, forecast, history, ac_potential, battery_soc=0.95
         )
-        assert battery_action_high_soc > 0  # Should discharge despite low price
+        assert action_high_soc > 0  # Should not discharge, but charge is limited
 
     def test_heuristic_no_battery_case(self):
         """Test heuristic behavior when plant has no battery."""
-        # Create a mock observation for a plant without battery
         mock_observation = {
             "market": {
                 "market_data": {
-                    ObservationName.CURRENT_PRICE: np.array([50.0]),
-                    ObservationName.PRICE_FORECAST: np.array([]),
+                    "current_price_dollar_mwh": 0.5,  # Normalized
+                    "price_forecast_dollar_mwh": np.array([0.5, 0.6]),
+                    "price_history_dollar_mwh": np.array([0.4, 0.45]),
                 }
             },
             "portfolios": {
                 "test_portfolio": {
                     "test_plant": {
-                        ObservationName.AC_POWER_GENERATION_POTENTIAL: np.array([8.5]),
-                        ObservationName.BATTERY_ENERGY_CAPACITY: np.array([0.0]),
-                        ObservationName.BATTERY_STATE_OF_CHARGE: np.array([0.0]),
-                        ObservationName.BATTERY_MIN_STATE_OF_CHARGE: np.array([0.0]),
-                        ObservationName.BATTERY_MAX_STATE_OF_CHARGE: np.array([0.0]),
-                        ObservationName.BATTERY_MAX_DISCHARGE_POWER: np.array([0.0]),
-                    }
+                        "ac_power_generation_potential_mw": 0.8,
+                        "battery_state_of_charge": 0.0,  # Empty battery
+                    },
                 }
             },
         }
 
-        heuristic = BasicHeuristic()
+        heuristic = Heuristic()
+        heuristic.configure(
+            {"portfolios": [{"plants": [{"name": "test_plant"}]}]}
+        )  # Basic config for num_plants=1
         action = heuristic.get_action(mock_observation)
 
-        # Should generate at full potential with no battery action
-        plant_action = action["test_portfolio"]["test_plant"]
-        ac_target = plant_action[ActionName.AC_POWER_GENERATION_TARGET.value]
-        battery_target = plant_action[ActionName.BATTERY_POWER_TARGET.value]
-        assert ac_target == 8.5
-        assert battery_target == 0.0
+        assert isinstance(action, np.ndarray)
+        assert action.shape == (1,)
+        # With neutral price and no battery, should generate near default solar
+        assert abs(action[0] - 0.5) < 0.1
 
     def test_heuristic_error_handling(self):
         """Test heuristic error handling with malformed observations."""
-        # Test with empty observation
-        heuristic = BasicHeuristic()
+        heuristic = Heuristic()
+        heuristic.configure({"portfolios": []})
 
-        empty_obs = {"market": {}, "portfolios": {}}
-        action = heuristic.get_action(empty_obs)
-        assert isinstance(action, dict)
-        assert len(action) == 0
+        # Test with completely empty observation
+        empty_obs = {}
+        with pytest.raises(ValueError):
+            heuristic.get_action(empty_obs)
+
+        # Test with missing portfolio data
+        missing_portfolio_obs = {"market": {"market_data": {}}}
+        with pytest.raises(ValueError):
+            heuristic.get_action(missing_portfolio_obs)

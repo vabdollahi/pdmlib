@@ -12,7 +12,6 @@ import pytest
 from app.core.simulation.weather_provider import (
     CSVWeatherProvider,
     WeatherColumns,
-    WeatherProvider,
     create_open_meteo_provider,
 )
 from app.core.utils.location import GeospatialLocation
@@ -49,8 +48,8 @@ class TestWeatherProviderCreation:
     def test_weather_provider_creates_openmeteo_by_default(
         self, mock_storage, sample_location
     ):
-        """Test that WeatherProvider creates OpenMeteo provider by default."""
-        provider = WeatherProvider(
+        """Test that create_open_meteo_provider creates OpenMeteo provider."""
+        provider = create_open_meteo_provider(
             location=sample_location,
             start_date="2025-01-01",
             end_date="2025-01-10",

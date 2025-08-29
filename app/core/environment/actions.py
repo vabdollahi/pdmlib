@@ -129,6 +129,126 @@ class ActionFactory:
 
         return templates
 
+    async def validate_action_feasibility(
+        self, action: ActionType, timestamp: datetime.datetime
+    ) -> Tuple[bool, Dict[str, str]]:
+        """
+        Validate action feasibility against plant constraints.
+
+        Args:
+            action: Action to validate
+            timestamp: Timestamp for validation
+
+        Returns:
+            Tuple of (is_feasible, validation_messages)
+        """
+        is_feasible = True
+        messages = {}
+
+        for portfolio_name, portfolio_action in action.items():
+            try:
+                portfolio = next(
+                    p for p in self.portfolios if p.config.name == portfolio_name
+                )
+            except StopIteration:
+                is_feasible = False
+                messages[f"{portfolio_name}"] = "Portfolio not found"
+                continue
+
+            for plant_name, plant_action in portfolio_action.items():
+                try:
+                    plant = next(
+                        p for p in portfolio.plants if p.config.name == plant_name
+                    )
+                except StopIteration:
+                    is_feasible = False
+                    messages[f"{portfolio_name}.{plant_name}"] = "Plant not found"
+                    continue
+
+                # Validate individual plant action
+                plant_feasible, plant_messages = await self._validate_plant_action(
+                    plant, plant_action, timestamp
+                )
+
+                if not plant_feasible:
+                    is_feasible = False
+
+                for constraint, message in plant_messages.items():
+                    messages[f"{portfolio_name}.{plant_name}.{constraint}"] = message
+
+        return is_feasible, messages
+
+    async def _validate_plant_action(
+        self,
+        plant,
+        plant_action: Dict[str, float],
+        timestamp: datetime.datetime,
+    ) -> Tuple[bool, Dict[str, str]]:
+        """Validate action feasibility for a single plant."""
+        is_feasible = True
+        messages = {}
+
+        # Extract target power
+        net_power_target = plant_action.get(ActionName.NET_POWER_TARGET.value)
+
+        if net_power_target is not None:
+            # Check basic power limits
+            if not (
+                plant.config.min_net_power_mw
+                <= net_power_target
+                <= plant.config.max_net_power_mw
+            ):
+                is_feasible = False
+                messages["power_limits"] = (
+                    f"Target {net_power_target:.2f}MW outside limits "
+                    f"[{plant.config.min_net_power_mw:.2f}, "
+                    f"{plant.config.max_net_power_mw:.2f}]"
+                )
+
+            # Check ramp rate constraints
+            ramp_constrained_power, ramp_valid = plant._validate_ramp_rate(
+                net_power_target, self.interval_min
+            )
+
+            if not ramp_valid:
+                is_feasible = False
+                power_change = net_power_target - plant._previous_net_power_mw
+                if power_change > 0:
+                    max_allowed = plant.config.ramp_up_mw_per_min * self.interval_min
+                    messages["ramp_up"] = (
+                        f"Ramp up {power_change:.2f}MW exceeds "
+                        f"limit {max_allowed:.2f}MW"
+                    )
+                else:
+                    max_allowed = plant.config.ramp_down_mw_per_min * self.interval_min
+                    messages["ramp_down"] = (
+                        f"Ramp down {abs(power_change):.2f}MW exceeds "
+                        f"limit {max_allowed:.2f}MW"
+                    )
+
+            # Check availability against PV and battery constraints
+            try:
+                max_gen, max_cons = await plant.get_available_power(
+                    timestamp, self.interval_min
+                )
+
+                if net_power_target > max_gen:
+                    is_feasible = False
+                    messages["generation_capacity"] = (
+                        f"Target {net_power_target:.2f}MW exceeds "
+                        f"available generation {max_gen:.2f}MW"
+                    )
+                elif net_power_target < -max_cons:
+                    is_feasible = False
+                    messages["consumption_capacity"] = (
+                        f"Target {net_power_target:.2f}MW exceeds "
+                        f"available consumption {max_cons:.2f}MW"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not validate plant availability: {e}")
+
+        return is_feasible, messages
+
     async def execute_action(
         self, action: ActionType, timestamp: datetime.datetime
     ) -> Tuple[Dict, Dict]:
@@ -142,6 +262,16 @@ class ActionFactory:
         Returns:
             Tuple of (execution_info, rewards)
         """
+        # Validate action feasibility first
+        is_feasible, validation_messages = await self.validate_action_feasibility(
+            action, timestamp
+        )
+
+        if not is_feasible:
+            logger.warning("Action feasibility violations detected:")
+            for constraint, message in validation_messages.items():
+                logger.warning(f"  {constraint}: {message}")
+
         portfolios_executed_action_info = {}
         portfolios_reward = {}
 

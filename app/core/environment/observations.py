@@ -39,10 +39,6 @@ class ObservationName:
     CURRENT_PRICE = "current_price_dollar_mwh"
     PRICE_FORECAST = "price_forecast_dollar_mwh"
     PRICE_HISTORY = "price_history_dollar_mwh"
-    PPA_PRICE = "ppa_price_dollar_mwh"
-    PPA_PRICE_FORECAST = "ppa_price_forecast_dollar_mwh"
-    PPA_AC_POWER_GENERATION_COMMITMENT = "ppa_ac_power_commitment_mw"
-    PPA_AC_POWER_GENERATION_COMMITMENT_FORECAST = "ppa_ac_power_commitment_forecast_mw"
 
     # Time-based observations
     HOUR_OF_DAY = "hour_of_day"
@@ -61,6 +57,7 @@ class ObservationFactory:
         power_normalization_coefficient: float = 1e6,
         price_normalization_coefficient: float = 100.0,
         interval_min: float = 60.0,
+        market_data=None,
     ):
         """
         Initialize observation factory.
@@ -72,6 +69,7 @@ class ObservationFactory:
             power_normalization_coefficient: Power normalization factor
             price_normalization_coefficient: Price normalization factor
             interval_min: Time interval in minutes
+            market_data: Market data object for price information
         """
         self.portfolios = portfolios
         self.historic_data_intervals = historic_data_intervals
@@ -80,6 +78,7 @@ class ObservationFactory:
         self.price_normalization_coefficient = price_normalization_coefficient
         self.interval_min = interval_min
         self.interval = datetime.timedelta(minutes=interval_min)
+        self.market_data = market_data
 
     async def create_observation(
         self, timestamp: datetime.datetime
@@ -117,7 +116,7 @@ class ObservationFactory:
         forecast_indices = self._create_forecast_indices(timestamp)
 
         # Create market observations
-        market_obs = self._create_market_observations(
+        market_obs = await self._create_market_observations(
             timestamp, historical_indices, forecast_indices
         )
         observation["market"] = {"market_data": market_obs}
@@ -265,12 +264,26 @@ class ObservationFactory:
 
         except Exception as e:
             logger.error(f"Error creating plant observations: {e}")
-            # Return default observations on error
-            plant_obs = self._get_default_plant_observations()
+            # Return empty observations on error
+            plant_obs = {
+                ObservationName.DC_POWER_GENERATION_POTENTIAL: np.array([0.0]),
+                ObservationName.AC_POWER_GENERATION_POTENTIAL: np.array([0.0]),
+                ObservationName.AC_POWER_GENERATION_POTENTIAL_FORECAST: np.array([]),
+                ObservationName.MAX_AC_POWER_TO_GRID: np.array([0.0]),
+                ObservationName.INVERTER_DC_TO_AC_CONVERSION_EFFICIENCY: (
+                    np.array([0.0])
+                ),
+                ObservationName.BATTERY_ENERGY_CAPACITY: np.array([0.0]),
+                ObservationName.BATTERY_MAX_CHARGE_POWER: np.array([0.0]),
+                ObservationName.BATTERY_MAX_DISCHARGE_POWER: np.array([0.0]),
+                ObservationName.BATTERY_STATE_OF_CHARGE: np.array([0.0]),
+                ObservationName.BATTERY_MIN_STATE_OF_CHARGE: np.array([0.0]),
+                ObservationName.BATTERY_MAX_STATE_OF_CHARGE: np.array([0.0]),
+            }
 
         return plant_obs
 
-    def _create_market_observations(
+    async def _create_market_observations(
         self,
         timestamp: datetime.datetime,
         historical_indices: pd.DatetimeIndex,
@@ -280,9 +293,21 @@ class ObservationFactory:
         market_obs = {}
 
         try:
-            # Current price (placeholder - would integrate with price providers)
-            current_price = 50.0  # $/MWh
-            market_obs[ObservationName.CURRENT_PRICE] = np.array([current_price])
+            # Get current price from market data
+            if not self.market_data:
+                raise ValueError("No market data available for price lookup")
+
+            # The `market_data` object should conform to the PriceProviderProtocol
+            market_price = await self.market_data.get_price_at_time(timestamp)
+
+            if market_price is None:
+                raise ValueError(f"No price data available for {timestamp}")
+
+            current_price = market_price
+
+            # Normalize price using configured coefficient
+            normalized_price = current_price / self.price_normalization_coefficient
+            market_obs[ObservationName.CURRENT_PRICE] = np.array([normalized_price])
 
             # Price history
             if len(historical_indices) > 0:
@@ -311,43 +336,11 @@ class ObservationFactory:
             else:
                 market_obs[ObservationName.PRICE_FORECAST] = np.array([])
 
-            # PPA observations (optional - set to None/zero for now)
-            market_obs[ObservationName.PPA_PRICE] = None
-            market_obs[ObservationName.PPA_PRICE_FORECAST] = None
-            market_obs[ObservationName.PPA_AC_POWER_GENERATION_COMMITMENT] = None
-            market_obs[ObservationName.PPA_AC_POWER_GENERATION_COMMITMENT_FORECAST] = (
-                None
-            )
-
         except Exception as e:
             logger.error(f"Error creating market observations: {e}")
-            market_obs = self._get_default_market_observations()
+            raise RuntimeError(f"Failed to create market observations: {e}")
 
         return market_obs
-
-    def _get_default_plant_observations(self) -> Dict[str, np.ndarray]:
-        """Get default plant observations for error cases."""
-        return {
-            ObservationName.DC_POWER_GENERATION_POTENTIAL: np.array([0.0]),
-            ObservationName.AC_POWER_GENERATION_POTENTIAL: np.array([0.0]),
-            ObservationName.AC_POWER_GENERATION_POTENTIAL_FORECAST: np.array([]),
-            ObservationName.MAX_AC_POWER_TO_GRID: np.array([0.0]),
-            ObservationName.INVERTER_DC_TO_AC_CONVERSION_EFFICIENCY: np.array([0.95]),
-            ObservationName.BATTERY_ENERGY_CAPACITY: np.array([0.0]),
-            ObservationName.BATTERY_MAX_CHARGE_POWER: np.array([0.0]),
-            ObservationName.BATTERY_MAX_DISCHARGE_POWER: np.array([0.0]),
-            ObservationName.BATTERY_STATE_OF_CHARGE: np.array([0.5]),
-            ObservationName.BATTERY_MIN_STATE_OF_CHARGE: np.array([0.1]),
-            ObservationName.BATTERY_MAX_STATE_OF_CHARGE: np.array([0.9]),
-        }
-
-    def _get_default_market_observations(self) -> Dict[str, np.ndarray]:
-        """Get default market observations for error cases."""
-        return {
-            ObservationName.CURRENT_PRICE: np.array([50.0]),
-            ObservationName.PRICE_FORECAST: np.array([]),
-            ObservationName.PRICE_HISTORY: np.array([]),
-        }
 
 
 def flatten_observation(
@@ -357,7 +350,7 @@ def flatten_observation(
     Flatten hierarchical observation structure to 1D array.
 
     Args:
-        observation: Hierarchical observation dict in new format:
+        observation: Hierarchical observation dict in format:
         {
             "market": { "market_data": {...} },
             "portfolios": { "portfolio_name": { "plant_name": {...} } }
@@ -368,72 +361,38 @@ def flatten_observation(
     """
     flattened_data = []
 
-    # Handle new observation format
-    if "market" in observation and "portfolios" in observation:
-        # Process market data
-        market_data = observation.get("market", {}).get("market_data", {})
-        for obs_name, obs_values in market_data.items():
-            if obs_values is None:
+    # Process market data
+    market_data = observation.get("market", {}).get("market_data", {})
+    for obs_name, obs_values in market_data.items():
+        if obs_values is None:
+            continue
+
+        if isinstance(obs_values, np.ndarray):
+            flattened_data.extend(obs_values.flatten())
+        elif isinstance(obs_values, (int, float)):
+            flattened_data.extend(np.array([obs_values]).flatten())
+        else:
+            try:
+                flattened_data.extend(np.array([obs_values]).flatten())
+            except (ValueError, TypeError):
                 continue
 
-            if isinstance(obs_values, np.ndarray):
-                flattened_data.extend(obs_values.flatten())
-            elif isinstance(obs_values, (int, float)):
-                flattened_data.extend(np.array([obs_values]).flatten())
-            else:
-                try:
-                    flattened_data.extend(np.array([obs_values]).flatten())
-                except (ValueError, TypeError):
-                    continue
-
-        # Process portfolio data
-        portfolios = observation.get("portfolios", {})
-        for portfolio_name, portfolio_data in portfolios.items():
-            for plant_name, plant_data in portfolio_data.items():
-                if isinstance(plant_data, dict):
-                    for obs_name, obs_values in plant_data.items():
-                        if obs_values is None:
-                            continue
-
-                        if isinstance(obs_values, np.ndarray):
-                            flattened_data.extend(obs_values.flatten())
-                        elif isinstance(obs_values, (int, float)):
-                            flattened_data.extend(np.array([obs_values]).flatten())
-                        else:
-                            try:
-                                flattened_data.extend(np.array([obs_values]).flatten())
-                            except (ValueError, TypeError):
-                                continue
-
-    else:
-        # Handle old observation format for backward compatibility
-        for portfolio_name, portfolio_data in observation.items():
-            for component_name, component_data in portfolio_data.items():
-                if isinstance(component_data, dict):
-                    for obs_name, obs_values in component_data.items():
-                        if obs_values is None:
-                            continue
-
-                        if isinstance(obs_values, np.ndarray):
-                            flattened_data.extend(obs_values.flatten())
-                        elif isinstance(obs_values, (int, float)):
-                            flattened_data.extend(np.array([obs_values]).flatten())
-                        else:
-                            try:
-                                flattened_data.extend(np.array([obs_values]).flatten())
-                            except (ValueError, TypeError):
-                                continue
-                else:
-                    if component_data is None:
+    # Process portfolio data
+    portfolios = observation.get("portfolios", {})
+    for portfolio_name, portfolio_data in portfolios.items():
+        for plant_name, plant_data in portfolio_data.items():
+            if isinstance(plant_data, dict):
+                for obs_name, obs_values in plant_data.items():
+                    if obs_values is None:
                         continue
 
-                    if isinstance(component_data, np.ndarray):
-                        flattened_data.extend(component_data.flatten())
-                    elif isinstance(component_data, (int, float)):
-                        flattened_data.extend(np.array([component_data]).flatten())
+                    if isinstance(obs_values, np.ndarray):
+                        flattened_data.extend(obs_values.flatten())
+                    elif isinstance(obs_values, (int, float)):
+                        flattened_data.extend(np.array([obs_values]).flatten())
                     else:
                         try:
-                            flattened_data.extend(np.array([component_data]).flatten())
+                            flattened_data.extend(np.array([obs_values]).flatten())
                         except (ValueError, TypeError):
                             continue
 

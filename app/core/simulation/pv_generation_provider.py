@@ -92,12 +92,6 @@ class PVGenerationProvider(BaseProvider):
                 start_dt = parse_datetime_input(start_date)
                 end_dt = parse_datetime_input(end_date)
                 set_range_fn(start_dt, end_dt)
-
-            # Set legacy attributes if present
-            if hasattr(self.pv_model.weather_provider, "start_date"):
-                self.pv_model.weather_provider.start_date = start_date  # type: ignore
-            if hasattr(self.pv_model.weather_provider, "end_date"):
-                self.pv_model.weather_provider.end_date = end_date  # type: ignore
         except Exception as e:
             logger.debug(f"Could not set weather provider range: {e}")
 

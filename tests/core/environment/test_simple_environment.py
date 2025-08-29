@@ -5,9 +5,10 @@ These tests verify basic functionality without complex fixture dependencies.
 All tests use CSV providers to avoid external API calls.
 """
 
+import gymnasium as gym
 import numpy as np
+import pytest
 
-from app.core.environment.config import create_environment_config_from_json
 from app.core.environment.power_management_env import PowerManagementEnvironment
 from tests.config import test_config
 
@@ -17,13 +18,13 @@ class TestSimpleEnvironment:
 
     def _create_test_environment(self):
         """Create test environment using spec-driven configuration."""
-        config = create_environment_config_from_json(test_config.environment_spec_path)
-        return PowerManagementEnvironment(config=config)
+        env = PowerManagementEnvironment.from_json(test_config.environment_spec_path)
+        return env
 
     def _get_test_portfolio(self):
         """Get the first portfolio from the test configuration."""
-        config = create_environment_config_from_json(test_config.environment_spec_path)
-        return config.portfolios[0]
+        env = PowerManagementEnvironment.from_json(test_config.environment_spec_path)
+        return env.config.portfolios[0]
 
     def _get_test_plant_with_battery(self):
         """Get the first plant (with battery) from the test configuration."""
@@ -43,48 +44,57 @@ class TestSimpleEnvironment:
         # Test observation space
         obs_space = env.observation_space
         assert obs_space is not None
-        assert hasattr(obs_space, "shape")
-        assert obs_space.shape is not None
-        assert obs_space.shape[0] > 0  # Should have some dimension
+        assert isinstance(obs_space, gym.spaces.Dict)
 
         # Test action space
         action_space = env.action_space
         assert action_space is not None
-        assert hasattr(action_space, "shape")
+        assert isinstance(action_space, gym.spaces.Box)
         assert action_space.shape == (3,)  # Three plants in unified portfolio
-        assert hasattr(action_space, "low")
-        assert hasattr(action_space, "high")
-        # Check bounds (accessing as arrays)
-        low_vals = getattr(action_space, "low")
-        high_vals = getattr(action_space, "high")
-        # Check all three plants have correct bounds
-        for i in range(3):
-            assert low_vals[i] == -1.0
-            assert high_vals[i] == 1.0
+        assert np.all(action_space.low == -1.0)
+        assert np.all(action_space.high == 1.0)
 
-    def test_environment_reset_and_step(self):
+    @pytest.mark.asyncio
+    async def test_environment_reset_and_step(self):
         """Test basic environment reset and step operations."""
         # Use unified config to ensure CSV providers
         env = self._create_test_environment()
 
+        # Get price provider from the first plant's revenue calculator
+        price_provider = None
+        for portfolio in env.config.portfolios:
+            for plant in portfolio.plants:
+                if (
+                    hasattr(plant, "revenue_calculator")
+                    and plant.revenue_calculator
+                    and hasattr(plant.revenue_calculator, "price_provider")
+                ):
+                    price_provider = plant.revenue_calculator.price_provider
+                    break
+            if price_provider:
+                break
+
+        if price_provider:
+            env.set_market_data(price_provider)
+
         # Test reset
-        observation, info = env.reset()
-        assert isinstance(observation, np.ndarray)
-        assert len(observation) > 0
-        assert np.all(np.isfinite(observation))
+        observation, info = await env.reset_async()
+        assert isinstance(observation, dict)
+        assert "market" in observation
+        assert "portfolios" in observation
         assert isinstance(info, dict)
 
         # Test step
-        action = np.array([0.0])  # Neutral action
-        observation, reward, terminated, truncated, info = env.step(action)
+        action = np.array([0.0, 0.0, 0.0])  # Neutral action for 3 plants
+        observation, reward, terminated, truncated, info = await env.step_async(action)
 
-        assert isinstance(observation, np.ndarray)
-        assert len(observation) > 0
+        assert isinstance(observation, dict)
+        assert "market" in observation
+        assert "portfolios" in observation
         assert isinstance(reward, (int, float))
         assert isinstance(terminated, bool)
         assert isinstance(truncated, bool)
         assert isinstance(info, dict)
-        assert np.all(np.isfinite(observation))
         assert np.isfinite(reward)
 
     def test_action_conversion_constraints(self):

@@ -85,8 +85,8 @@ async def main(config_file_path: str | None = None):
         print("   - Market data pre-loaded: Ready")
         print("   - Agent ready for decision making: Ready")
 
-        # Run simulation with limited steps for demonstration
-        results = await simulation.run_simulation(max_steps=5)
+        # Run simulation for the full duration of the available data
+        results = await simulation.run_simulation()
 
         # Step 3: Display results
         print("\nSimulation Results:")

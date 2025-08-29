@@ -41,11 +41,11 @@ from tests.config import test_config
 @pytest.fixture
 def test_portfolio():
     """Create a test portfolio using spec-driven configuration."""
-    from app.core.environment.config import create_environment_config_from_json
+    from app.core.environment.power_management_env import PowerManagementEnvironment
 
-    config = create_environment_config_from_json(test_config.environment_spec_path)
+    env = PowerManagementEnvironment.from_json(test_config.environment_spec_path)
     # Get the first portfolio from the spec
-    return config.portfolios[0]
+    return env.config.portfolios[0]
 
 
 @pytest.fixture
