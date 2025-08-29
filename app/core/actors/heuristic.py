@@ -317,41 +317,37 @@ class BasicHeuristic(Actor):
         """Get default action in case of errors."""
         actions = {}
 
-        try:
-            # Get current price to check for negative pricing
-            current_price = 50.0  # Default fallback
-            if "market" in observation and "market_data" in observation["market"]:
-                market_data = observation["market"]["market_data"]
-                if ObservationName.CURRENT_PRICE in market_data:
-                    price_array = market_data[ObservationName.CURRENT_PRICE]
-                    if len(price_array) > 0:
-                        current_price = float(price_array[0])
+        # Get current price to check for negative pricing
+        if "market" in observation and "market_data" in observation["market"]:
+            market_data = observation["market"]["market_data"]
+            if ObservationName.CURRENT_PRICE not in market_data:
+                raise ValueError("Current price not available in market data")
+            price_array = market_data[ObservationName.CURRENT_PRICE]
+            if len(price_array) == 0:
+                raise ValueError("Empty price array in market data")
+            current_price = float(price_array[0])
+        else:
+            raise ValueError("Market data not available in observation")
 
-            for portfolio_name, portfolio_obs in observation["portfolios"].items():
-                actions[portfolio_name] = {}
+        for portfolio_name, portfolio_obs in observation["portfolios"].items():
+            actions[portfolio_name] = {}
 
-                for plant_name, plant_obs in portfolio_obs.items():
-                    # Default: check if plant_obs is dict-like
-                    if isinstance(plant_obs, dict):
-                        ac_potential = plant_obs.get(
-                            ObservationName.AC_POWER_GENERATION_POTENTIAL,
-                            np.array([0.0]),
-                        )[0]
-                    else:
-                        # Fallback if plant_obs is not a dict
-                        ac_potential = 0.0
+            for plant_name, plant_obs in portfolio_obs.items():
+                # Default: check if plant_obs is dict-like
+                if isinstance(plant_obs, dict):
+                    ac_potential = plant_obs.get(
+                        ObservationName.AC_POWER_GENERATION_POTENTIAL,
+                        np.array([0.0]),
+                    )[0]
+                else:
+                    raise ValueError("Plant observation data must be a dictionary")
 
-                    # Don't generate at negative prices by default
-                    generation_target = ac_potential if current_price >= 0 else 0.0
+                # Don't generate at negative prices by default
+                generation_target = ac_potential if current_price >= 0 else 0.0
 
-                    actions[portfolio_name][plant_name] = {
-                        ActionName.AC_POWER_GENERATION_TARGET.value: generation_target,
-                        ActionName.BATTERY_POWER_TARGET.value: 0.0,
-                    }
-
-        except Exception as e:
-            logger.warning(f"Error in default action generation: {e}")
-            # Ultra-safe fallback
-            actions = {}
+                actions[portfolio_name][plant_name] = {
+                    ActionName.AC_POWER_GENERATION_TARGET.value: generation_target,
+                    ActionName.BATTERY_POWER_TARGET.value: 0.0,
+                }
 
         return actions

@@ -196,21 +196,15 @@ class PowerManagementEnvironment(gym.Env):
         portfolio_action = self._convert_action_to_portfolio_format(action)
 
         # Execute the action
-        try:
-            info, rewards = await self.action_factory.execute_action(
-                portfolio_action, self.timestamp
-            )
+        info, rewards = await self.action_factory.execute_action(
+            portfolio_action, self.timestamp
+        )
 
-            # Calculate total reward across all portfolios
-            total_reward = 0.0
-            for portfolio_rewards in rewards.values():
-                for plant_reward in portfolio_rewards.values():
-                    total_reward += plant_reward
-
-        except Exception as e:
-            logger.error(f"Error executing action: {e}")
-            info = {"error": str(e)}
-            total_reward = -1.0  # Penalty for invalid actions
+        # Calculate total reward across all portfolios
+        total_reward = 0.0
+        for portfolio_rewards in rewards.values():
+            for plant_reward in portfolio_rewards.values():
+                total_reward += plant_reward
 
         # Move forward in time
         self.timestep += 1

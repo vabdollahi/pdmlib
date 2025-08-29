@@ -103,69 +103,39 @@ class RevenueReward(Reward):
         self, portfolio: PowerPlantPortfolio, timestamp: datetime.datetime
     ) -> float:
         """Get current electricity price for the portfolio's market."""
-        # Try to get price from the portfolio's plants' revenue calculators
+        # Get price from the portfolio's plants' revenue calculators
         for plant in portfolio.plants:
             if hasattr(plant, "revenue_calculator") and plant.revenue_calculator:
-                try:
-                    # Get price data from the plant's revenue calculator
-                    price_provider = plant.revenue_calculator.price_provider
-                    if hasattr(price_provider, "get_data"):
-                        # Get current price data
-                        price_data = await price_provider.get_data()
-                        if not price_data.empty:
-                            # Find price closest to current timestamp
-                            price_data_indexed = price_data.reset_index()
-                            timestamp_col = "timestamp"
-                            if timestamp_col in price_data_indexed.columns:
-                                # Find closest timestamp
-                                time_diffs = abs(
-                                    price_data_indexed[timestamp_col] - timestamp
-                                )
-                                closest_idx = time_diffs.idxmin()
-                                price_col = "price_dollar_mwh"
-                                if price_col in price_data_indexed.columns:
-                                    try:
-                                        price_value = price_data_indexed.at[
-                                            closest_idx, price_col
-                                        ]
-                                        current_price = float(price_value)
-                                        logger.debug(
-                                            f"Retrieved price ${current_price:.2f}/MWh "
-                                            "from price provider"
-                                        )
-                                        return current_price
-                                    except (ValueError, TypeError, KeyError):
-                                        logger.warning(
-                                            f"Invalid price value at index "
-                                            f"{closest_idx}"
-                                        )
-                                        continue
-                except Exception as e:
-                    logger.warning(f"Error getting price from revenue calculator: {e}")
-                    continue
+                # Get price data from the plant's revenue calculator
+                price_provider = plant.revenue_calculator.price_provider
+                price_data = await price_provider.get_data()
 
-        # Fallback to simple time-based price simulation if no price provider available
-        logger.debug("Using fallback time-based price simulation")
-        hour = timestamp.hour
+                if price_data.empty:
+                    raise ValueError("No price data available from revenue calculator")
 
-        # Simple duck curve simulation (realistic market price patterns)
-        if 10 <= hour <= 14:  # Midday solar production
-            base_price = 20.0  # Lower prices during high solar
-        elif 17 <= hour <= 20:  # Evening peak
-            base_price = 80.0  # Higher prices during peak demand
-        elif 6 <= hour <= 9:  # Morning ramp
-            base_price = 60.0  # Moderate prices during morning demand
-        else:  # Off-peak and overnight
-            base_price = 30.0
+                # Find price closest to current timestamp
+                price_data_indexed = price_data.reset_index()
+                timestamp_col = "timestamp"
+                if timestamp_col not in price_data_indexed.columns:
+                    raise ValueError("No timestamp column found in price data")
 
-        # Add some volatility
-        import math
+                # Find closest timestamp
+                time_diffs = abs(price_data_indexed[timestamp_col] - timestamp)
+                closest_idx = time_diffs.idxmin()
+                price_col = "price_dollar_mwh"
 
-        price_volatility = 10.0 * math.sin(hour * math.pi / 12)
-        current_price = base_price + price_volatility
+                if price_col not in price_data_indexed.columns:
+                    raise ValueError(
+                        f"Price column '{price_col}' not found in price data"
+                    )
 
-        # Ensure price doesn't go negative in this simple model
-        return max(current_price, 5.0)
+                current_price = float(price_data_indexed.at[closest_idx, price_col])
+                logger.debug(
+                    f"Retrieved price ${current_price:.2f}/MWh from price provider"
+                )
+                return current_price
+
+        raise ValueError("No revenue calculator available for price calculation")
 
     def _update_smoothed_revenue(self, revenue: float) -> None:
         """Update smoothed revenue using exponential moving average."""

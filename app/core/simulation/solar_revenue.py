@@ -86,15 +86,8 @@ class SolarRevenueCalculator:
         logger.info("Fetching LMP data")
         if start_time and end_time:
             self.price_provider.set_range(start_time, end_time)
-            price_data = await self.price_provider.get_data()
-        else:
-            # For backward compatibility, try to get data from the provider's cache
-            # This assumes the provider has been configured with dates already
-            try:
-                price_data = await self.price_provider.get_data()
-            except Exception as e:
-                logger.warning(f"Could not get price data: {e}")
-                price_data = pd.DataFrame()
+
+        price_data = await self.price_provider.get_data()
 
         if len(price_data) == 0:
             raise ValueError("No LMP price data available for revenue calculation")

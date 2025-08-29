@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 
 from app.core.simulation.price_provider import (
     PriceProviderConfig,
-    create_price_provider,
 )
 from app.core.simulation.price_regions import PriceMarketRegion
 from app.core.simulation.pv_model import PVModel
@@ -61,45 +60,31 @@ async def create_solar_system():
     logger.info(f"Analysis Date: {start_date}")
     logger.info(f"Market Region: {market_region}")
 
-    # Auto-select price provider based on region; keep CSV fallback only for CAISO demo
-    try:
-        logger.info("Creating price provider (auto)...")
-        cfg = PriceProviderConfig(
-            market_region=market_region,
-            location=location,
-            start_date=start_date,
-            end_date=end_date,
-            organization=org_asset[0],
-            asset=org_asset[1],
-        )
-        price_provider = cfg.create_provider()
+    # Create price provider - no fallbacks
+    logger.info("Creating price provider...")
+    cfg = PriceProviderConfig(
+        market_region=market_region,
+        location=location,
+        start_date=start_date,
+        end_date=end_date,
+        organization=org_asset[0],
+        asset=org_asset[1],
+    )
+    price_provider = cfg.create_provider()
 
-        # Test if provider can actually get data using datetime objects
-        price_provider.set_range(start_time, end_time)
-        test_data = await price_provider.get_data()
+    # Test if provider can actually get data using datetime objects
+    price_provider.set_range(start_time, end_time)
+    test_data = await price_provider.get_data()
 
-        if test_data.empty:
-            raise Exception("Selected provider returned no data")
+    if test_data.empty:
+        raise ValueError(f"Price provider for {market_region} returned no data")
 
-        # Provider-specific info
-        from app.core.simulation.caiso_data import CAISOPriceProvider
+    # Provider-specific info
+    from app.core.simulation.caiso_data import CAISOPriceProvider
 
-        if isinstance(price_provider, CAISOPriceProvider):
-            logger.info(f"CAISO Pricing Node: {price_provider.region}")
-        logger.info("Price provider ready")
-
-    except Exception as e:
-        logger.warning(f"{market_region} provider failed: {e}")
-        logger.warning("Falling back to CSV test data...")
-        from pathlib import Path
-
-        csv_path = (
-            Path(__file__).parent.parent / "tests" / "data" / "sample_price_data.csv"
-        )
-        price_provider = create_price_provider(
-            source_type="csv", csv_file_path=csv_path
-        )
-        logger.info("Using CSV test data")
+    if isinstance(price_provider, CAISOPriceProvider):
+        logger.info(f"CAISO Pricing Node: {price_provider.region}")
+    logger.info("Price provider ready")
 
     # Create PV model using direct PVLib configuration
     logger.info("Creating solar farm using direct PVLib configuration...")
