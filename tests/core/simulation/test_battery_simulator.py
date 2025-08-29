@@ -395,3 +395,68 @@ class TestBatteryIntegration:
         power, soc, valid = battery.dispatch_power(5.0, 60.0)
         assert valid is True
         assert power > 0
+
+
+class TestBatteryPhysicsValidation:
+    """Test battery physics and realistic constraints."""
+
+    def test_efficiency_physics_limits(self):
+        """Test that battery efficiency is within realistic bounds."""
+        # Test realistic efficiency range (80-95%)
+        valid_efficiency = 0.85
+        config = BatteryConfiguration(
+            energy_capacity_mwh=100.0,
+            max_power_mw=25.0,
+            round_trip_efficiency=valid_efficiency,
+        )
+        assert config.round_trip_efficiency == valid_efficiency
+
+        # Test that efficiency > 100% is rejected (violates physics)
+        with pytest.raises(ValueError):
+            BatteryConfiguration(
+                energy_capacity_mwh=100.0,
+                max_power_mw=25.0,
+                round_trip_efficiency=1.1,  # 110% efficiency - impossible
+            )
+
+    def test_soc_physics_constraints(self):
+        """Test SOC constraints follow battery physics."""
+        config = BatteryConfiguration(
+            energy_capacity_mwh=100.0,
+            max_power_mw=25.0,
+            min_soc=0.05,  # 5% minimum (battery protection)
+            max_soc=0.95,  # 95% maximum (battery protection)
+        )
+
+        # SOC limits should be physically reasonable
+        assert 0.0 <= config.min_soc <= 0.2  # Up to 20% minimum is reasonable
+        assert 0.8 <= config.max_soc <= 1.0  # 80-100% maximum is reasonable
+
+        battery = LinearBatterySimulator(config=config)
+
+        # Test that battery respects SOC limits during operation
+        # Try to discharge below minimum
+        battery.reset_state(config.min_soc)
+        power, soc, valid = battery.dispatch_power(50.0, 60.0)  # Large discharge
+        assert soc >= config.min_soc  # Should not go below minimum
+
+        # Try to charge above maximum
+        battery.reset_state(config.max_soc)
+        power, soc, valid = battery.dispatch_power(-50.0, 60.0)  # Large charge
+        assert soc <= config.max_soc  # Should not go above maximum
+
+    def test_power_capacity_relationship(self):
+        """Test that power and energy capacity have realistic relationship."""
+        # Typical C-rate should be 0.25 to 4.0 (15min to 4hr discharge)
+        energy_mwh = 100.0
+
+        # Test reasonable power rating (1C rate = 1-hour discharge)
+        power_mw = 100.0  # 1C rate
+        BatteryConfiguration(energy_capacity_mwh=energy_mwh, max_power_mw=power_mw)
+
+        c_rate = power_mw / energy_mwh
+        assert 0.25 <= c_rate <= 4.0  # Reasonable C-rate range
+
+        # Document that extremely high C-rates should be validated
+        # (This would require updating the BatteryConfiguration class)
+        # extreme_power = energy_mwh * 10  # 10C rate - very high

@@ -9,10 +9,10 @@ This module tests portfolio functionality including:
 - Portfolio diversity metrics
 
 All tests use local CSV files for weather and price data, no API calls.
+All tests use the unified configuration system for consistency.
 """
 
-import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -34,29 +34,42 @@ from app.core.simulation.pvlib_models import PVLibModel
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.simulation.weather_provider import CSVWeatherProvider
 from app.core.utils.location import GeospatialLocation
+from tests.config import test_config
 
 
 # Shared fixtures for all test classes
 @pytest.fixture
-def portfolio_config_data():
-    """Load portfolio configuration from JSON file."""
-    config_dir = Path(__file__).parent.parent.parent / "config"
-    config_path = config_dir / "portfolio_multi_plant_config.json"
-    with open(config_path, "r") as f:
-        data = json.load(f)
-    return data
+def test_portfolio():
+    """Create a test portfolio using spec-driven configuration."""
+    from app.core.environment.power_management_env import PowerManagementEnvironment
+
+    env = PowerManagementEnvironment.from_json(test_config.environment_spec_path)
+    # Get the first portfolio from the spec
+    return env.config.portfolios[0]
 
 
 @pytest.fixture
-def portfolio_config(portfolio_config_data):
-    """Standard portfolio configuration for testing."""
-    return PortfolioConfiguration(**portfolio_config_data["portfolio_config"])
+def portfolio_config():
+    """Get portfolio configuration from unified config."""
+    config_data = test_config.load_config_file("test_config_multi.json")
+    # Use the first portfolio from the portfolios array
+    portfolio_data = config_data["portfolios"][0]
+    return PortfolioConfiguration.model_validate(
+        {
+            "name": portfolio_data["name"],
+            "max_total_power_mw": portfolio_data["max_total_power_mw"],
+            "allow_grid_purchase": portfolio_data.get("allow_grid_purchase", False),
+            "strategy": PortfolioStrategy.BALANCED,  # Default strategy
+        }
+    )
 
 
 @pytest.fixture
-def plant_configs(portfolio_config_data):
-    """Load plant configurations from JSON file."""
-    return portfolio_config_data["plants"]
+def plant_configs():
+    """Load plant configurations from unified config."""
+    config_data = test_config.load_config_file("test_config_multi.json")
+    # Get plants from the first portfolio
+    return config_data["portfolios"][0]["plants"]
 
 
 @pytest.fixture
@@ -69,8 +82,8 @@ def weather_provider():
     provider = CSVWeatherProvider(location=location, file_path=str(csv_path))
     # Set range to match the data in the CSV file
     provider.set_range(
-        start_time=datetime(2025, 7, 15, 0, 0),
-        end_time=datetime(2025, 7, 15, 23, 0),
+        start_time=datetime(2025, 7, 15, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2025, 7, 15, 23, 0, tzinfo=timezone.utc),
     )
     return provider
 
@@ -83,8 +96,8 @@ def price_provider():
     provider = CSVPriceProvider(csv_file_path=str(csv_path))
     # Set range to match the data in the CSV file
     provider.set_range(
-        start_time=datetime(2025, 7, 15, 0, 0),
-        end_time=datetime(2025, 7, 15, 23, 0),
+        start_time=datetime(2025, 7, 15, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2025, 7, 15, 23, 0, tzinfo=timezone.utc),
     )
     return provider
 
@@ -157,15 +170,31 @@ class TestPortfolioCreation:
         plants_list = await test_plants
         portfolio = PowerPlantPortfolio(config=portfolio_config, plants=plants_list)
 
-        assert portfolio.config.name == "Test Multi-Plant Portfolio"
+        assert portfolio.config.name == "Validation Portfolio"
         assert portfolio.config.strategy == PortfolioStrategy.BALANCED
         assert len(portfolio.plants) == 3
 
         # Verify all plants are properly initialized
+        plants_with_batteries = 0
+        plants_without_batteries = 0
+
         for plant in portfolio.plants:
             assert plant.pv_model is not None
-            assert len(plant.batteries) > 0
             assert plant.revenue_calculator is not None
+
+            # Count plants with and without batteries
+            if len(plant.batteries) > 0:
+                plants_with_batteries += 1
+            else:
+                plants_without_batteries += 1
+
+        # Verify our expected configuration: 2 plants with batteries, 1 without
+        assert plants_with_batteries == 2, (
+            f"Expected 2 plants with batteries, got {plants_with_batteries}"
+        )
+        assert plants_without_batteries == 1, (
+            f"Expected 1 plant without batteries, got {plants_without_batteries}"
+        )
 
     @pytest.mark.asyncio
     async def test_portfolio_data_loading(self, weather_provider, price_provider):
@@ -253,13 +282,14 @@ class TestPortfolioDispatch:
     async def test_dispatch_power_balanced_strategy(self, test_portfolio):
         """Test power dispatch with balanced strategy using local data."""
         portfolio = await test_portfolio
-        timestamp = datetime(2025, 7, 15, 12, 0, 0)  # Noon - matches CSV data
+        # Noon - matches CSV data
+        timestamp = datetime(2025, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
         target_power = 10.0  # MW
 
         portfolio.set_strategy(PortfolioStrategy.BALANCED)
 
         actual_power, state, is_valid = await portfolio.dispatch_power(
-            target_net_power_mw=target_power, timestamp=timestamp, interval_minutes=15.0
+            target_net_power_mw=target_power, timestamp=timestamp, interval_minutes=60.0
         )
 
         assert is_valid
@@ -271,10 +301,11 @@ class TestPortfolioDispatch:
     async def test_get_available_power(self, test_portfolio):
         """Test available power calculation using local CSV data."""
         portfolio = await test_portfolio
-        timestamp = datetime(2025, 7, 15, 10, 0, 0)  # Morning - matches CSV data
+        # Morning - matches CSV data
+        timestamp = datetime(2025, 7, 15, 10, 0, 0, tzinfo=timezone.utc)
 
         max_gen, max_cons = await portfolio.get_available_power(
-            timestamp=timestamp, interval_minutes=5.0
+            timestamp=timestamp, interval_minutes=60.0
         )
 
         assert isinstance(max_gen, float)
@@ -374,3 +405,64 @@ class TestPortfolioEdgeCases:
         print(f"Weather data loaded: {len(weather_data)} rows")
         print(f"Price data loaded: {len(price_data)} rows")
         print("CSV data integrity check passed - no external API calls made")
+
+
+class TestPortfolioPhysicsValidation:
+    """Test portfolio physics and logical constraints."""
+
+    def test_grid_purchase_physics_limits(self):
+        """Test that grid purchase limits are physically reasonable."""
+        # Test realistic grid purchase limits
+        config = PortfolioConfiguration(
+            name="Physics Test Portfolio",
+            allow_grid_purchase=True,
+            max_grid_purchase_mw=50.0,  # Reasonable for small producer
+        )
+
+        assert config.allow_grid_purchase is True
+        assert config.max_grid_purchase_mw == 50.0
+
+        # Test that grid purchase limit is positive
+        with pytest.raises(ValueError):
+            PortfolioConfiguration(
+                name="Invalid Portfolio",
+                max_grid_purchase_mw=-10.0,  # Should fail
+            )
+
+    def test_portfolio_power_physics(self):
+        """Test portfolio power capacity physics constraints."""
+        # Test reasonable total capacity limits
+        config = PortfolioConfiguration(
+            name="Power Physics Test",
+            max_total_power_mw=1000.0,  # 1 GW utility scale
+            min_operating_plants=2,
+        )
+
+        assert config.max_total_power_mw == 1000.0
+        assert config.min_operating_plants >= 1
+
+        # Test that power limits are positive
+        with pytest.raises(ValueError):
+            PortfolioConfiguration(
+                name="Invalid Power Portfolio",
+                max_total_power_mw=-100.0,  # Should fail
+            )
+
+    def test_risk_management_physics(self):
+        """Test risk management parameters are within realistic bounds."""
+        config = PortfolioConfiguration(
+            name="Risk Test Portfolio",
+            max_portfolio_risk=0.15,  # 15% max risk
+            diversification_weight=0.3,  # 30% weight on diversification
+        )
+
+        # Risk should be between 0 and 1
+        assert 0.0 <= config.max_portfolio_risk <= 1.0
+        assert 0.0 <= config.diversification_weight <= 1.0
+
+        # Test extreme values are rejected
+        with pytest.raises(ValueError):
+            PortfolioConfiguration(
+                name="High Risk Portfolio",
+                max_portfolio_risk=1.5,  # Should fail - over 100%
+            )

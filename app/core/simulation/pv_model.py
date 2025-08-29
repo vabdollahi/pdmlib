@@ -117,12 +117,12 @@ class PVModel(BaseModel):
             storage=storage,
             pv_model=self,
         )
-        logger.info(f"PV caching enabled for {organization}/{asset}")
+        logger.debug(f"PV caching enabled for {organization}/{asset}")
 
     def disable_caching(self) -> None:
         """Disable caching for this PV model."""
         self._cached_provider = None
-        logger.info("PV caching disabled")
+        logger.debug("PV caching disabled")
 
     @property
     def is_caching_enabled(self) -> bool:
@@ -141,14 +141,32 @@ class PVModel(BaseModel):
         """
         # Use cached provider if available
         if self._cached_provider and not force_refresh:
-            logger.info("Using cached PV generation data")
+            logger.debug("Using cached PV generation data")
             return await self._cached_provider.get_data(force_refresh=False)
         elif self._cached_provider and force_refresh:
-            logger.info("Force refresh requested, bypassing cache")
+            logger.debug("Force refresh requested, bypassing cache")
             return await self._cached_provider.get_data(force_refresh=True)
         else:
             # Run simulation without caching
             return await self._run_simulation_uncached()
+
+    def set_cached_range(self, start_dt, end_dt) -> None:
+        """Update the cached provider's date range if caching is enabled.
+
+        Args:
+            start_dt: datetime for start (inclusive)
+            end_dt: datetime for end (inclusive)
+        """
+        if not self._cached_provider:
+            return
+        try:
+            # Format to provider's expected string format
+            start_str = pd.to_datetime(start_dt).strftime("%Y-%m-%d %H:%M:%S")
+            end_str = pd.to_datetime(end_dt).strftime("%Y-%m-%d %H:%M:%S")
+            self._cached_provider.start_date = start_str  # type: ignore[attr-defined]
+            self._cached_provider.end_date = end_str  # type: ignore[attr-defined]
+        except Exception as e:
+            logger.debug(f"Could not update cached range: {e}")
 
     async def _run_simulation_uncached(self) -> pd.DataFrame:
         """
@@ -366,23 +384,52 @@ class PVModel(BaseModel):
             if dc_results is not None:
                 for array, pdc in zip(model_chain.system.arrays, dc_results):
                     dc_col_name = self.get_dc_column_name(array.name)
+                    dc_values = None
+
                     # Try different ways to access DC power for CEC model
-                    if hasattr(pdc, "__getitem__") and "p_mp" in pdc:
-                        results[dc_col_name] = pdc["p_mp"].values
-                    elif hasattr(pdc, "values"):
-                        results[dc_col_name] = pdc.values
-                    else:
-                        msg = f"Could not extract DC power for array {array.name}"
-                        logger.warning(msg)
+                    try:
+                        if hasattr(pdc, "__getitem__") and "p_mp" in pdc:
+                            dc_values = pdc["p_mp"].values
+                        elif hasattr(pdc, "values"):
+                            dc_values = pdc.values
+                        elif hasattr(pdc, "__iter__") and not isinstance(pdc, str):
+                            # Try to iterate over the result
+                            dc_values = list(pdc)
+                        else:
+                            # Log as debug since DC power is optional for revenue calc
+                            logger.debug(
+                                f"Could not extract DC power for array {array.name} "
+                                "(AC power calculation continues normally)"
+                            )
+                            continue
+                    except (KeyError, AttributeError, TypeError) as e:
+                        logger.debug(
+                            f"DC power extraction failed for array {array.name}: {e} "
+                            "(AC power calculation continues normally)"
+                        )
                         continue
-                    dc_columns.append(dc_col_name)
+
+                    if dc_values is not None:
+                        results[dc_col_name] = dc_values
+                        dc_columns.append(dc_col_name)
 
                 # Store total DC power
                 if dc_columns:
                     total_dc = results[dc_columns].sum(axis=1)
                     results[PVLibResultsColumns.DC.value] = total_dc
+                    logger.debug(
+                        f"Successfully extracted DC power for {len(dc_columns)} arrays"
+                    )
+                else:
+                    logger.debug(
+                        "No DC power data extracted "
+                        "(AC power calculation continues normally)"
+                    )
         except Exception as e:
-            logger.warning(f"Could not process DC results for CEC: {e}")
+            logger.debug(
+                f"Could not process DC results for CEC: {e} "
+                "(AC power calculation continues normally)"
+            )
 
     def _process_default_results(
         self, model_chain: modelchain.ModelChain
@@ -462,15 +509,23 @@ class PVModel(BaseModel):
                         results[dc_col_name] = dc_values
                         dc_columns.append(dc_col_name)
                     else:
-                        msg = f"Could not extract DC power for array {array.name}"
-                        logger.warning(msg)
+                        logger.debug(
+                            f"Could not extract DC power for array {array.name} "
+                            "(AC power calculation continues normally)"
+                        )
 
                 # Store total DC power
                 if dc_columns:
                     total_dc = results[dc_columns].sum(axis=1)
                     results[PVLibResultsColumns.DC.value] = total_dc
+                    logger.debug(
+                        f"Successfully extracted DC power for {len(dc_columns)} arrays"
+                    )
         except Exception as e:
-            logger.warning(f"Could not process generic DC results: {e}")
+            logger.debug(
+                f"Could not process generic DC results: {e} "
+                "(AC power calculation continues normally)"
+            )
 
     def get_system_capacity(self) -> Dict[str, float]:
         """
@@ -483,7 +538,13 @@ class PVModel(BaseModel):
         total_dc_capacity = 0
 
         for pv_system in self.pv_config.pv_systems:
-            if hasattr(pv_system, "max_power_output_ac_w"):
+            # Ensure the PV system is created to populate AC capacity
+            pv_system.create()
+
+            # Check the correct attribute name for AC capacity
+            if hasattr(pv_system, "_max_power_output_ac_w"):
+                total_ac_capacity += pv_system._max_power_output_ac_w or 0
+            elif hasattr(pv_system, "max_power_output_ac_w"):
                 total_ac_capacity += pv_system.max_power_output_ac_w or 0
 
             # Calculate DC capacity from arrays

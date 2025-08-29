@@ -1,66 +1,57 @@
+# PDM Power Management Library
+
+A comprehensive power management simulation library for solar + battery systems with real-time market integration.
+
 ## Requirements
 
 - Python 3.12+
-- [`uv` package manager](https://github.com/pdm-project/uv)
+- [`uv` package manager](https://docs.astral.sh/uv/)
 
-### Common uv Commands
+## Quick Start
 
-- **Install dependencies:**
-  `uv sync --all-extras`
-- **Add dependency:**
-  `uv add <package_name>`
-- **Add dev dependency:**
-  `uv add --dev <package_name>`
-- **Remove dependency:**
-  `uv remove <package_name>`
+```bash
+# Install dependencies
+uv sync
 
-Dependencies are managed in `pyproject.toml` and `uv.lock`.
+# Run solar revenue calculator (simple demo)
+uv run task start
 
-### Running the Application
+# Run power management simulation (full system)
+uv run task simulate
 
-- **Dev server (auto-reload):**
-  `uv run uvicorn app.main:app --reload`
-- **Production server:**
-  `uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4`
+# Run tests
+uv run task test
 
+# Lint code
+uv run task lint
+```
+
+## Project Structure
+
+- `app/main.py` - Solar revenue calculator demo
+- `app/simulation_main.py` - Complete power management simulation
+- `tests/config/` - Configuration files for testing
+  - `test_config_simple.json` - Single plant configuration
+  - `test_config_multi.json` - Multi-plant portfolio configuration
+
+## Key Features
+
+- **Unified Configuration System**: JSON-driven setup for complete simulations
+- **Agent-Based Control**: Heuristic agents for battery management
+- **Real Market Data**: Integration with CAISO and IESO price feeds
+- **PV Modeling**: Advanced photovoltaic simulation using PVLib
+- **Portfolio Management**: Multi-plant coordination and optimization
+- **UTC Timezone Enforcement**: Consistent time handling throughout
 
 ## Development Scripts
 
-Reusable scripts are defined in `pyproject.toml`. Run them with:
-```
-  uv run task <script>
-```
-Examples:
-```
-  uv run task start        # Runs the FastAPI server (dev)
-  uv run task test         # Runs all tests
-  uv run task lint         # Runs code linting checks
-  uv run task lint-fix  # Formats and sorts imports
-```
+All scripts are defined in `pyproject.toml`:
 
-## Testing
-
-Tests are in the `tests/` directory. Run them with:
-```
-  uv run task test
-```
-Or using pytest directly:
-```
-  pytest tests/
-```
-
-## Linting & Formatting
-
-Lint code:
-```
-  uv run task lint
-```
-Format code and sort imports:
-```
-  uv run task lint-fix
-```
-Or run the tools directly:
-```
-  black app tests
-  isort app tests
+```bash
+uv run task start        # Solar revenue demo
+uv run task simulate     # Power management simulation  
+uv run task test         # Run all tests
+uv run task test-verbose # Verbose test output
+uv run task lint         # Lint checks
+uv run task lint-fix     # Auto-fix linting issues
 ```

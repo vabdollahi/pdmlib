@@ -274,13 +274,13 @@ class OpenMeteoWeatherProvider(BaseProvider, BaseWeatherProvider):
                 return pd.DataFrame()
 
             # Apply radiation decomposition if needed
-            enhanced_df = self.calculate_radiation_components(raw_df)
+            processed_df = self.calculate_radiation_components(raw_df)
 
             # Log optimization information
             if not self.fetch_all_radiation:
                 has_decomposed = (
-                    WeatherColumns.DNI in enhanced_df.columns
-                    and WeatherColumns.DHI in enhanced_df.columns
+                    WeatherColumns.DNI in processed_df.columns
+                    and WeatherColumns.DHI in processed_df.columns
                 )
                 if has_decomposed:
                     logger.info(
@@ -288,7 +288,7 @@ class OpenMeteoWeatherProvider(BaseProvider, BaseWeatherProvider):
                         "calculated 2 additional (50% cost reduction)"
                     )
 
-            return enhanced_df
+            return processed_df
 
         except Exception as e:
             logger.error(

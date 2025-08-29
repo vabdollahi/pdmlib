@@ -25,7 +25,7 @@ logger = get_logger("storage")
 
 class DataStorage:
     """
-    Enhanced data storage with separation of raw and processed data.
+    Data storage with separation of raw and processed data.
 
     Raw data (weather, price): Always cached independently at global level
     Processed data (PV generation): Cached with context-awareness
@@ -67,7 +67,12 @@ class DataStorage:
         return "/".join([self.base_path, "raw", normalized_type, location_str])
 
     def _get_processed_data_path(
-        self, organization: str, asset: str, data_type: str, location: Location
+        self,
+        organization: str,
+        asset: str,
+        data_type: str,
+        location: Location,
+        key_suffix: str | None = None,
     ) -> str:
         """
         Get path for processed data (context-aware, plant-specific).
@@ -80,11 +85,13 @@ class DataStorage:
 
         if should_use_unified_structure():
             # Portfolio context: use unified structure
-            # organization/asset/data/category/location
+            # organization/asset/data/category/([suffix]/)location
             category = "power_generation" if data_type == "pv_generation" else data_type
-            return "/".join(
-                [self.base_path, organization, asset, "data", category, location_str]
-            )
+            parts = [self.base_path, organization, asset, "data", category]
+            if key_suffix:
+                parts.append(key_suffix)
+            parts.append(location_str)
+            return "/".join(parts)
         else:
             # Standalone context: use legacy structure
             # organization/asset/data_type/location
@@ -113,6 +120,7 @@ class DataStorage:
         asset: str,
         data_type: str,
         location: Location,
+        key_suffix: str | None = None,
     ) -> str:
         """
         Constructs the path for a given data partition using best practices.
@@ -152,7 +160,7 @@ class DataStorage:
         elif is_processed_data_type(data_type):
             # Processed data: context-aware caching with plant-specific assets
             return self._get_processed_data_path(
-                organization, asset, data_type, location
+                organization, asset, data_type, location, key_suffix
             )
         else:
             # Fallback to legacy behavior for unknown data types
@@ -168,6 +176,7 @@ class DataStorage:
         asset: str,
         data_type: str,
         location: Location,
+        key_suffix: str | None = None,
     ):
         """
         Writes a DataFrame to monthly Parquet files with smart caching strategy.
@@ -189,15 +198,17 @@ class DataStorage:
             raise ValueError("DataFrame index must be a DatetimeIndex.")
 
         partition_path = self._get_partition_path(
-            organization, asset, data_type, location
+            organization, asset, data_type, location, key_suffix
         )
 
         # Log caching strategy being used
         if is_raw_data_type(data_type):
-            logger.info(f"Caching raw {data_type} data independently: {partition_path}")
+            logger.debug(
+                f"Caching raw {data_type} data independently: {partition_path}"
+            )
         elif is_processed_data_type(data_type):
             context = "unified" if should_use_unified_structure() else "legacy"
-            logger.info(
+            logger.debug(
                 f"Caching processed {data_type} using {context} structure: "
                 f"{partition_path}"
             )
@@ -259,6 +270,7 @@ class DataStorage:
         location: Location,
         start_date: str,
         end_date: str,
+        key_suffix: str | None = None,
     ) -> pd.DataFrame:
         """
         Reads and combines monthly Parquet files with smart caching strategy.
@@ -281,7 +293,7 @@ class DataStorage:
             return pd.DataFrame()
 
         partition_path = self._get_partition_path(
-            organization, asset, data_type, location
+            organization, asset, data_type, location, key_suffix
         )
 
         if not self.fs.exists(partition_path):
@@ -319,16 +331,17 @@ class DataStorage:
                 with self.fs.open(file_path, "rb") as f:
                     monthly_df = pd.read_parquet(f)
 
-                    # Clean up any unwanted index columns that might remain
-                    if "index" in monthly_df.columns:
-                        monthly_df = monthly_df.drop(columns=["index"])
+                # Clean up any unwanted index columns that might remain
+                if "index" in monthly_df.columns:
+                    monthly_df = monthly_df.drop(columns=["index"])
 
-                    # Set date_time back to be the index
-                    if "date_time" in monthly_df.columns:
-                        monthly_df = monthly_df.set_index("date_time")
-                        # Ensure index is datetime type
-                        if not pd.api.types.is_datetime64_any_dtype(monthly_df.index):
-                            monthly_df.index = pd.to_datetime(monthly_df.index)
+                # Set date_time back to be the index
+                if "date_time" in monthly_df.columns:
+                    monthly_df = monthly_df.set_index("date_time")
+                    # Ensure index is datetime type
+                    if not pd.api.types.is_datetime64_any_dtype(monthly_df.index):
+                        monthly_df.index = pd.to_datetime(monthly_df.index)
+
                 all_data.append(monthly_df)
             except (ValueError, TypeError):
                 # Ignore files that don't match the naming convention
@@ -343,7 +356,10 @@ class DataStorage:
         # Ensure index is datetime type and timezone-aware if needed
         if not pd.api.types.is_datetime64_any_dtype(combined_df.index):
             logger.warning(
-                f"Index is not datetime type: {combined_df.index.dtype}. Converting..."
+                (
+                    "Index is not datetime type: %s. Converting..."
+                    % combined_df.index.dtype
+                )
             )
             combined_df.index = pd.to_datetime(combined_df.index)
 

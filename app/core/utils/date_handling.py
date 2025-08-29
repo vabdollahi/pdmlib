@@ -1,12 +1,12 @@
 """
-Enhanced date and datetime handling utilities for the PDM library.
+Date and datetime handling utilities for the PDM library.
 
 This module provides flexible parsing of date and datetime inputs,
 supporting both date-only and full datetime specifications, and
 configurable time intervals for data fetching.
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Optional, Tuple, Union
 
@@ -88,73 +88,47 @@ def parse_datetime_input(
     """
     Parse various datetime input formats into a datetime object.
 
-    Args:
-        dt_input: Input in various formats:
-            - "YYYY-MM-DD" (date string)
-            - "YYYY-MM-DD HH:MM:SS" (datetime string)
-            - "YYYY-MM-DD HH:MM" (datetime string without seconds)
-            - date object
-            - datetime object
-        default_time: Default time to use for date-only inputs.
-                     If None, uses 00:00:00 for start times and 23:59:59 for end times.
-
-    Returns:
-        A datetime object with timezone set to UTC.
-
-    Examples:
-        >>> parse_datetime_input("2025-01-01")
-        datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
-
-        >>> parse_datetime_input("2025-01-01 14:30:00")
-        datetime(2025, 1, 1, 14, 30, tzinfo=UTC)
-
-        >>> parse_datetime_input("2025-01-01 14:30")
-        datetime(2025, 1, 1, 14, 30, tzinfo=UTC)
+    Returns a timezone-aware UTC datetime.
     """
+    # Datetime instance
     if isinstance(dt_input, datetime):
-        # Already a datetime, ensure it's UTC
-        if dt_input.tzinfo is None:
-            return dt_input.replace(tzinfo=pd.Timestamp.utcnow().tz)
-        return dt_input.astimezone(pd.Timestamp.utcnow().tz)
+        return (
+            dt_input.replace(tzinfo=timezone.utc)
+            if dt_input.tzinfo is None
+            else dt_input.astimezone(timezone.utc)
+        )
 
-    elif isinstance(dt_input, date):
-        # Convert date to datetime with default time
+    # Date instance
+    if isinstance(dt_input, date):
         if default_time is None:
-            default_time = time(0, 0, 0)  # midnight
+            default_time = time(0, 0, 0)
         dt = datetime.combine(dt_input, default_time)
-        return dt.replace(tzinfo=pd.Timestamp.utcnow().tz)
+        return dt.replace(tzinfo=timezone.utc)
 
-    elif isinstance(dt_input, str):
-        # Parse string input
-        dt_input = dt_input.strip()
-
-        # Try different datetime formats
+    # String instance
+    if isinstance(dt_input, str):
+        s = dt_input.strip()
         formats = [
-            "%Y-%m-%d %H:%M:%S",  # Full datetime with seconds
-            "%Y-%m-%d %H:%M",  # Datetime without seconds
-            "%Y-%m-%d",  # Date only
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
         ]
-
         for fmt in formats:
             try:
-                parsed_dt = datetime.strptime(dt_input, fmt)
-
-                # If it's date-only format and we have a default time, use it
+                parsed = datetime.strptime(s, fmt)
                 if fmt == "%Y-%m-%d" and default_time is not None:
-                    parsed_dt = parsed_dt.replace(
+                    parsed = parsed.replace(
                         hour=default_time.hour,
                         minute=default_time.minute,
                         second=default_time.second,
                     )
-
-                return parsed_dt.replace(tzinfo=pd.Timestamp.utcnow().tz)
+                return parsed.replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
-
         raise ValueError(f"Unable to parse datetime input: {dt_input}")
 
-    else:
-        raise TypeError(f"Unsupported datetime input type: {type(dt_input)}")
+    # Unsupported type
+    raise TypeError(f"Unsupported datetime input type: {type(dt_input)}")
 
 
 def normalize_date_range(
@@ -351,41 +325,10 @@ def split_datetime_range_by_days(
 def create_date_range_with_interval(
     start_dt: datetime, end_dt: datetime, interval: TimeInterval = TimeInterval.HOURLY
 ) -> pd.DatetimeIndex:
-    """
-    Create a pandas DatetimeIndex with the specified interval.
-
-    Args:
-        start_dt: Start datetime
-        end_dt: End datetime
-        interval: Time interval for the range
-
-    Returns:
-        DatetimeIndex with timestamps at the specified interval
-
-    Examples:
-        >>> start = datetime(2025, 1, 1, 0, 0)
-        >>> end = datetime(2025, 1, 1, 2, 0)
-        >>> range_5min = create_date_range_with_interval(
-        ...     start, end, TimeInterval.FIVE_MINUTES
-        ... )
-        >>> len(range_5min)  # 2 hours * 12 intervals per hour + 1
-        25
-
-        >>> range_hourly = create_date_range_with_interval(
-        ...     start, end, TimeInterval.HOURLY
-        ... )
-        >>> len(range_hourly)  # 2 hours + 1
-        3
-    """
-    # Convert to UTC if the inputs have timezone info, otherwise use UTC
-    if start_dt.tzinfo is not None:
-        start_utc = start_dt.astimezone(pd.Timestamp.utcnow().tz)
-        end_utc = end_dt.astimezone(pd.Timestamp.utcnow().tz)
-    else:
-        start_utc = start_dt.replace(tzinfo=pd.Timestamp.utcnow().tz)
-        end_utc = end_dt.replace(tzinfo=pd.Timestamp.utcnow().tz)
-
-    return pd.date_range(start=start_utc, end=end_utc, freq=interval.pandas_frequency)
+    """Create a pandas DatetimeIndex with the specified interval."""
+    return pd.date_range(
+        start=start_dt, end=end_dt, freq=interval.pandas_frequency, tz="UTC"
+    )
 
 
 def find_missing_intervals(
@@ -397,8 +340,7 @@ def find_missing_intervals(
     """
     Find missing time intervals in existing data.
 
-    This is an enhanced version of _find_missing_date_ranges that works
-    with configurable time intervals instead of just hourly data.
+    Works with configurable time intervals instead of just hourly data.
 
     Args:
         start_dt: Required start datetime

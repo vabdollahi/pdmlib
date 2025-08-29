@@ -58,7 +58,7 @@ class BaseProvider(BaseModel, ABC):
         self.start_date = start_rounded.strftime("%Y-%m-%d %H:%M:%S")
         self.end_date = end_rounded.strftime("%Y-%m-%d %H:%M:%S")
 
-        logger.info(
+        logger.debug(
             f"Rounded to {self.interval.display_name} intervals: "
             f"{self.start_date} to {self.end_date}"
         )
@@ -70,6 +70,23 @@ class BaseProvider(BaseModel, ABC):
         for a specific date range from the underlying data source.
         """
         raise NotImplementedError
+
+    def _get_storage_key_suffix(self) -> str | None:
+        """
+        Optional provider-specific suffix for cache partitioning.
+
+        Subclasses may implement `_get_cache_key_suffix()` to provide a
+        stable discriminator (e.g., PV config hash). If not provided, None.
+        """
+        # Prefer subclass hook if available
+        try:
+            get_suffix = getattr(self, "_get_cache_key_suffix", None)
+            if callable(get_suffix):
+                val = get_suffix()
+                return str(val) if val is not None else None
+        except Exception:
+            pass
+        return None
 
     async def get_data(self, force_refresh: bool = False) -> pd.DataFrame:
         """
@@ -90,13 +107,14 @@ class BaseProvider(BaseModel, ABC):
 
             # Save the fresh data to cache only if there's actual data
             if not fresh_data.empty and isinstance(fresh_data.index, pd.DatetimeIndex):
-                logger.info("Saving fresh data to Parquet store")
+                logger.debug("Saving fresh data to cache")
                 self.storage.write_data(
                     df=fresh_data,
                     organization=self.organization,
                     asset=self.asset,
                     data_type=self.data_type,
                     location=self.location,
+                    key_suffix=self._get_storage_key_suffix(),
                 )
             else:
                 logger.info("No fresh data to save (empty or invalid DataFrame)")
@@ -111,9 +129,10 @@ class BaseProvider(BaseModel, ABC):
             location=self.location,
             start_date=self.start_date,
             end_date=self.end_date,
+            key_suffix=self._get_storage_key_suffix(),
         )
 
-        # 2. Identify missing date ranges using the enhanced date handling utility
+        # 2. Identify missing date ranges using the date handling utility
         if cached_data.empty:
             # No cached data, fetch everything
             missing_ranges = [(self.start_date, self.end_date)]
@@ -123,7 +142,7 @@ class BaseProvider(BaseModel, ABC):
             end_dt = parse_datetime_input(self.end_date)
             cached_data_index = pd.to_datetime(cached_data.index)
 
-            # Use the enhanced missing intervals detection
+            # Use the missing intervals detection
             missing_intervals = find_missing_intervals(
                 start_dt, end_dt, cached_data_index, self.interval
             )
@@ -135,7 +154,7 @@ class BaseProvider(BaseModel, ABC):
             ]
 
         if not missing_ranges and not cached_data.empty:
-            logger.info("All data found in cache")
+            logger.debug("All data found in cache")
             result = cached_data.loc[self.start_date : self.end_date]
             return result if isinstance(result, pd.DataFrame) else result.to_frame().T
 
@@ -157,13 +176,14 @@ class BaseProvider(BaseModel, ABC):
 
         # Only save if there's actual data to save
         if not new_data_df.empty and isinstance(new_data_df.index, pd.DatetimeIndex):
-            logger.info("Saving newly fetched data to Parquet store")
+            logger.debug("Saving newly fetched data to cache")
             self.storage.write_data(
                 df=new_data_df,
                 organization=self.organization,
                 asset=self.asset,
                 data_type=self.data_type,
                 location=self.location,
+                key_suffix=self._get_storage_key_suffix(),
             )
         else:
             logger.info("No new data to save (empty or invalid DataFrame)")

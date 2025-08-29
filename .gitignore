@@ -7,11 +7,17 @@ wheels/
 *.egg-info
 .cache.sqlite
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Virtual environments
 .venv
 
-# Ruff
+# Lint
 .ruff_cache
+.flake8
 
 # data folders
 # Ignore only the repository root data directory where cached outputs are stored
@@ -21,3 +27,6 @@ wheels/
 
 # cache
 .cache/
+
+# Results
+simulation_results

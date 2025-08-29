@@ -219,22 +219,55 @@ class CSVWeatherProvider(BaseWeatherProvider):
             # Read CSV file
             df = pd.read_csv(self.file_path)
 
-            # Ensure datetime index
+            # Ensure datetime index with UTC timezone
             if "timestamp" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
                 df.set_index("timestamp", inplace=True)
             elif WeatherColumns.DATE_TIME.value in df.columns:
                 df[WeatherColumns.DATE_TIME.value] = pd.to_datetime(
-                    df[WeatherColumns.DATE_TIME.value]
+                    df[WeatherColumns.DATE_TIME.value], utc=True
                 )
                 df.set_index(WeatherColumns.DATE_TIME.value, inplace=True)
             else:
                 # Assume first column is datetime
-                df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
+                df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0], utc=True)
                 df.set_index(df.columns[0], inplace=True)
 
-            # Filter by date range (if any was set)
-            mask = (df.index >= start) & (df.index <= end)
+            # Filter by date range (if any was set), aligning timezone awareness
+            idx_tz = getattr(df.index, "tz", None)
+
+            # Prepare comparable bounds respecting index tz-awareness
+            start_cmp: datetime | pd.Timestamp
+            end_cmp: datetime | pd.Timestamp
+
+            if idx_tz is None:
+                # Index is timezone-naive; compare against naive datetimes
+                start_cmp = (
+                    start.replace(tzinfo=None)
+                    if hasattr(start, "tzinfo") and start.tzinfo is not None
+                    else start
+                )
+                end_cmp = (
+                    end.replace(tzinfo=None)
+                    if hasattr(end, "tzinfo") and end.tzinfo is not None
+                    else end
+                )
+            else:
+                # Index is timezone-aware; convert bounds to the same timezone
+                start_ts = pd.Timestamp(start)
+                end_ts = pd.Timestamp(end)
+                start_cmp = (
+                    start_ts.tz_localize(idx_tz)
+                    if start_ts.tz is None
+                    else start_ts.tz_convert(idx_tz)
+                )
+                end_cmp = (
+                    end_ts.tz_localize(idx_tz)
+                    if end_ts.tz is None
+                    else end_ts.tz_convert(idx_tz)
+                )
+
+            mask = (df.index >= start_cmp) & (df.index <= end_cmp)
             filtered_df = df[mask].copy()
 
             # Standardize column names if needed
@@ -348,7 +381,9 @@ class WeatherProviderConfig(BaseModel):
         return create_weather_provider(self.location, self.provider_type, **kwargs)
 
 
-def WeatherProvider(location: GeospatialLocation, **kwargs) -> BaseWeatherProvider:
+def create_open_meteo_provider(
+    location: GeospatialLocation, **kwargs
+) -> BaseWeatherProvider:
     """
     Convenience facade for weather data access.
 

@@ -16,7 +16,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Protocol
 
-from app.core.simulation.plant import Plant, SolarBatteryPlant
+from app.core.simulation.plant import Plant
 from app.core.simulation.solar_revenue import SolarRevenueCalculator
 from app.core.utils.logging import get_logger
 
@@ -47,7 +47,7 @@ class PortfolioStateColumns(str, Enum):
     TOTAL_GENERATION_MW = "total_generation_mw"
     TOTAL_CONSUMPTION_MW = "total_consumption_mw"
     NET_POWER_MW = "net_power_mw"
-    REVENUE_USD = "revenue_usd"
+    REVENUE_DOLLAR = "revenue_dollar"
     PLANT_COUNT = "plant_count"
     STRATEGY = "strategy"
 
@@ -64,7 +64,7 @@ class PortfolioProtocol(Protocol):
         self,
         target_net_power_mw: float,
         timestamp: datetime.datetime,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> Tuple[float, Dict[str, float], bool]:
         """
         Dispatch power across the portfolio.
@@ -80,7 +80,7 @@ class PortfolioProtocol(Protocol):
         ...
 
     def get_available_power(
-        self, timestamp: datetime.datetime, interval_minutes: float = 5.0
+        self, timestamp: datetime.datetime, interval_minutes: float = 60.0
     ) -> Tuple[float, float]:
         """
         Get available power generation and consumption capability.
@@ -135,6 +135,18 @@ class PortfolioConfiguration(BaseModel):
     )
     enable_ancillary_services: bool = Field(
         default=False, description="Enable ancillary services participation"
+    )
+    allow_grid_purchase: bool = Field(
+        default=False,
+        description=(
+            "Allow purchasing power from the grid when generation is insufficient. "
+            "True for small producers/prosumers, False for traditional power plants."
+        ),
+    )
+    max_grid_purchase_mw: float = Field(
+        default=50.0,
+        description="Maximum power that can be purchased from grid (MW)",
+        gt=0.0,
     )
 
     # Portfolio limits
@@ -217,11 +229,11 @@ class PowerPlantPortfolio(BaseModel):
 
             default_storage = DataStorage(base_path="data")
             self.enable_pv_caching(default_storage)
-            logger.info(f"PV caching auto-enabled for portfolio '{self.config.name}'")
+            logger.debug(f"PV caching auto-enabled for portfolio '{self.config.name}'")
         except Exception as e:
             logger.warning(f"Could not auto-enable PV caching for portfolio: {e}")
 
-        logger.info(
+        logger.debug(
             f"Initialized portfolio '{self.config.name}' with {len(self.plants)} plants"
         )
 
@@ -392,10 +404,19 @@ class PowerPlantPortfolio(BaseModel):
         enabled_count = 0
         for plant in self.plants:
             if hasattr(plant, "enable_pv_caching"):
+                # Skip if already enabled to avoid reconfiguring org/asset
+                try:
+                    if hasattr(plant, "pv_model") and getattr(
+                        plant.pv_model, "is_caching_enabled", False
+                    ):
+                        continue
+                except Exception:
+                    pass
+
                 plant.enable_pv_caching(storage)
                 enabled_count += 1
 
-        logger.info(
+        logger.debug(
             f"PV caching enabled for {enabled_count}/{len(self.plants)} plants "
             f"in portfolio '{self.config.name}'"
         )
@@ -430,7 +451,7 @@ class PowerPlantPortfolio(BaseModel):
         return status
 
     async def get_available_power(
-        self, timestamp: datetime.datetime, interval_minutes: float = 5.0
+        self, timestamp: datetime.datetime, interval_minutes: float = 60.0
     ) -> Tuple[float, float]:
         """
         Get total available power generation and consumption capability.
@@ -441,6 +462,7 @@ class PowerPlantPortfolio(BaseModel):
 
         Returns:
             Tuple of (max_generation_mw, max_consumption_mw)
+            Note: If grid purchase is allowed, max_generation includes grid power
         """
         total_generation = 0.0
         total_consumption = 0.0
@@ -458,6 +480,10 @@ class PowerPlantPortfolio(BaseModel):
                     f"Error getting power availability from plant "
                     f"{plant.config.name}: {e}"
                 )
+
+        # If grid purchase is allowed, add the configurable grid purchase limit
+        if self.config.allow_grid_purchase:
+            total_generation += self.config.max_grid_purchase_mw
 
         return total_generation, total_consumption
 
@@ -582,7 +608,7 @@ class PowerPlantPortfolio(BaseModel):
         self,
         target_net_power_mw: float,
         timestamp: datetime.datetime,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> Tuple[float, Dict, bool]:
         """
         Dispatch power across the portfolio using optimization strategy.
@@ -646,6 +672,20 @@ class PowerPlantPortfolio(BaseModel):
                 )
                 all_operations_valid = False
 
+        # Handle grid purchase if enabled and there's a power shortfall
+        grid_purchase_mw = 0.0
+        if self.config.allow_grid_purchase and total_actual_power < target_net_power_mw:
+            power_shortfall_mw = target_net_power_mw - total_actual_power
+            # Limit grid purchase to the configured maximum
+            grid_purchase_mw = min(power_shortfall_mw, self.config.max_grid_purchase_mw)
+            total_actual_power += grid_purchase_mw
+
+            logger.debug(
+                f"Grid purchase: {grid_purchase_mw:.2f}MW "
+                f"(max {self.config.max_grid_purchase_mw:.2f}MW) to meet "
+                f"shortfall for portfolio '{self.config.name}'"
+            )
+
         # Create portfolio state with extended information
         portfolio_state = self._get_portfolio_state(
             timestamp, total_generation, total_consumption
@@ -654,6 +694,7 @@ class PowerPlantPortfolio(BaseModel):
             {
                 "plant_results": plant_results,
                 "target_power_mw": target_net_power_mw,
+                "grid_purchase_mw": grid_purchase_mw,
                 "allocation_efficiency": (
                     total_actual_power / target_net_power_mw
                     if target_net_power_mw != 0
@@ -692,17 +733,17 @@ class PowerPlantPortfolio(BaseModel):
         if self.revenue_calculator:
             try:
                 # Portfolio-level revenue calculation would need implementation
-                state[PortfolioStateColumns.REVENUE_USD.value] = 0.0
+                state[PortfolioStateColumns.REVENUE_DOLLAR.value] = 0.0
             except Exception as e:
-                logger.warning(f"Error calculating portfolio revenue: {e}")
-                state[PortfolioStateColumns.REVENUE_USD.value] = 0.0
+                logger.warning(f"Error calculating revenue for portfolio: {e}")
+                state[PortfolioStateColumns.REVENUE_DOLLAR.value] = 0.0
 
         return state
 
     async def simulate_operation(
         self,
         power_schedule_mw: pd.Series,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> pd.DataFrame:
         """
         Simulate portfolio operation over a power dispatch schedule.
@@ -849,84 +890,6 @@ class PowerPlantPortfolio(BaseModel):
         )
 
         return combined_portfolio
-
-
-# -----------------------------------------------------------------------------
-# Factory and Helper Functions
-# -----------------------------------------------------------------------------
-
-
-class PortfolioFactory:
-    """Factory for creating power plant portfolio instances."""
-
-    @staticmethod
-    def create_solar_portfolio(
-        name: str,
-        plants: List[SolarBatteryPlant],
-        strategy: PortfolioStrategy = PortfolioStrategy.BALANCED,
-        revenue_calculator: Optional[SolarRevenueCalculator] = None,
-        portfolio_id: Optional[str] = None,
-    ) -> PowerPlantPortfolio:
-        """
-        Create a solar plant portfolio with standard configuration.
-
-        Args:
-            name: Portfolio name
-            plants: List of solar-battery plants
-            strategy: Portfolio optimization strategy
-            revenue_calculator: Optional revenue calculation model
-            portfolio_id: Optional unique portfolio identifier
-
-        Returns:
-            Configured PowerPlantPortfolio instance
-        """
-        if not plants:
-            raise ValueError("Portfolio must contain at least one plant")
-
-        config = PortfolioConfiguration(
-            name=name,
-            portfolio_id=portfolio_id,
-            strategy=strategy,
-            min_operating_plants=min(len(plants), 1),
-        )
-
-        return PowerPlantPortfolio(
-            config=config,
-            plants=plants,
-            revenue_calculator=revenue_calculator,
-        )
-
-    @staticmethod
-    def create_diversified_portfolio(
-        name: str,
-        plants: List[Plant],
-        max_risk: float = 0.2,
-        portfolio_id: Optional[str] = None,
-    ) -> PowerPlantPortfolio:
-        """
-        Create a risk-diversified portfolio.
-
-        Args:
-            name: Portfolio name
-            plants: List of plants with different characteristics
-            max_risk: Maximum portfolio risk level
-            portfolio_id: Optional unique portfolio identifier
-
-        Returns:
-            Configured PowerPlantPortfolio with risk minimization strategy
-        """
-        config = PortfolioConfiguration(
-            name=name,
-            portfolio_id=portfolio_id,
-            strategy=PortfolioStrategy.RISK_MINIMIZATION,
-            max_portfolio_risk=max_risk,
-            diversification_weight=0.6,  # Higher weight on diversification
-        )
-
-        return PowerPlantPortfolio(
-            config=config,
-            plants=plants,
-        )
 
 
 # Type aliases

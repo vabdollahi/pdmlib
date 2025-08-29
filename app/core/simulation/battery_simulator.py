@@ -59,7 +59,7 @@ class BatteryProtocol(Protocol):
     def dispatch_power(
         self,
         target_power_mw: float,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> Tuple[float, float, bool]:
         """
         Dispatch power to/from the battery.
@@ -73,7 +73,9 @@ class BatteryProtocol(Protocol):
         """
         ...
 
-    def get_available_power(self, interval_minutes: float = 5.0) -> Tuple[float, float]:
+    def get_available_power(
+        self, interval_minutes: float = 60.0
+    ) -> Tuple[float, float]:
         """
         Get available charging and discharging power.
 
@@ -210,7 +212,9 @@ class LinearBatterySimulator(BaseModel):
             self.current_soc - self.config.min_soc
         ) * self.config.energy_capacity_mwh
 
-    def get_available_power(self, interval_minutes: float = 5.0) -> Tuple[float, float]:
+    def get_available_power(
+        self, interval_minutes: float = 60.0
+    ) -> Tuple[float, float]:
         """
         Calculate maximum available charging and discharging power.
 
@@ -266,7 +270,7 @@ class LinearBatterySimulator(BaseModel):
     def dispatch_power(
         self,
         target_power_mw: float,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> Tuple[float, float, bool]:
         """
         Dispatch power to/from the battery with efficiency and constraint handling.
@@ -399,7 +403,7 @@ class LinearBatterySimulator(BaseModel):
     def simulate_dispatch_schedule(
         self,
         power_schedule_mw: pd.Series,
-        interval_minutes: float = 5.0,
+        interval_minutes: float = 60.0,
     ) -> pd.DataFrame:
         """
         Simulate battery operation over a power dispatch schedule.
