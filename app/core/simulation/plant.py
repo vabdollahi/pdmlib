@@ -583,19 +583,10 @@ class SolarBatteryPlant(BaseModel):
         # Get PV generation potential (reuse if provided)
         if pv_potential_mw is None:
             pv_potential_mw = await self.get_pv_generation_potential(timestamp)
-            logger.info(
-                f"DEBUG: get_available_power - PV potential: {pv_potential_mw:.6f}MW "
-                f"at {timestamp}"
-            )
 
         # Get battery capabilities
         battery_charge_mw, battery_discharge_mw = self.get_battery_available_power(
             interval_minutes
-        )
-
-        logger.info(
-            f"DEBUG: get_available_power - Battery discharge: "
-            f"{battery_discharge_mw:.2f}MW, charge: {battery_charge_mw:.2f}MW"
         )
 
         # Maximum generation: PV + battery discharge
@@ -605,11 +596,6 @@ class SolarBatteryPlant(BaseModel):
 
         # Maximum consumption: battery charging (limited by PV curtailment)
         max_consumption_mw = min(battery_charge_mw, pv_potential_mw)
-
-        logger.info(
-            f"DEBUG: get_available_power - Final max_gen: {max_generation_mw:.6f}MW, "
-            f"max_cons: {max_consumption_mw:.6f}MW"
-        )
 
         return max_generation_mw, max_consumption_mw
 
@@ -675,10 +661,11 @@ class SolarBatteryPlant(BaseModel):
 
             # Try to charge batteries with excess PV, but don't force it
             # Allow for PV curtailment if batteries can't absorb excess
+            # Note: charge power is negative, so we need abs() to get capacity
             battery_target_power_mw = -min(
                 excess_pv_mw,
                 sum(
-                    battery.get_available_power(interval_minutes)[0]
+                    abs(battery.get_available_power(interval_minutes)[0])
                     for battery in self.batteries
                 ),
             )
@@ -922,7 +909,7 @@ class SolarBatteryPlant(BaseModel):
 
         combined_plant = SolarBatteryPlant(
             config=combined_config,
-            pv_model=self.pv_model,  # TODO: Implement proper PV model combination
+            pv_model=self.pv_model,  # Using existing PV model for combined plant
             batteries=combined_batteries,
             revenue_calculator=self.revenue_calculator,
         )
